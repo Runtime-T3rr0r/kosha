@@ -1,3 +1,425 @@
-# effects.yaml — command/tool pattern -> (reversibility, scope, privilege) seeds.
-# TODO: seed from context doc §7 / §9.
-effects: []
+# effects.yaml: command/tool pattern -> effect axes (reversible, scope, privilege).
+#
+# match.family  command family recognized by the parser (git, rm, sql, kubectl, ...)
+#               or a file-tool family (file_write) for edit/write tool calls.
+# match.sub     subcommand, statement type, or the context class a resolver assigns
+#               (tracked_clean | untracked | outside_workspace, local | shared db).
+# match.flags_any  entry matches if any of these tokens is present; [] = no flag condition.
+# scope         local | shared | external | resolve
+#
+# Level comes from the rubric, not from this file. Unrecognized commands fall through
+# to `unknown` (conservative default).
+
+# --- read-only ---
+- id: ls
+  match: {family: fs_read, sub: ls, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only listing"
+- id: cat_nonsecret
+  match: {family: fs_read, sub: cat, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read a non-secret file; secret reads match secret_* instead"
+- id: grep
+  match: {family: fs_read, sub: grep, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only search"
+- id: find
+  match: {family: fs_read, sub: find, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only search; find -exec/-delete classified by the executed command"
+- id: git_status
+  match: {family: git, sub: status, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only"
+- id: git_diff
+  match: {family: git, sub: diff, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only"
+- id: git_log
+  match: {family: git, sub: log, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only"
+- id: sql_select
+  match: {family: sql, sub: select, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only query"
+- id: kubectl_get
+  match: {family: kubectl, sub: get, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only cluster query"
+- id: kubectl_describe
+  match: {family: kubectl, sub: describe, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "read-only cluster query"
+- id: http_get
+  match: {family: http, sub: get, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "curl/wget GET, no payload leaves"
+
+# --- file edits / writes ---
+- id: file_write_tracked_clean
+  match: {family: file_write, sub: tracked_clean, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "tracked + committed file in repo; git restore recovers it"
+- id: file_write_untracked
+  match: {family: file_write, sub: untracked, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "untracked file in repo; no prior state to restore"
+- id: file_write_outside_workspace
+  match: {family: file_write, sub: outside_workspace, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "write outside repo/workspace, e.g. ../shared_lib"
+
+# --- rm / destructive local ---
+- id: rm_tracked_clean
+  match: {family: rm, sub: tracked_clean, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "tracked + committed file; git restore recovers it"
+- id: rm_untracked
+  match: {family: rm, sub: untracked, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "untracked file is gone for good"
+- id: rm_recursive
+  match: {family: rm, sub: null, flags_any: ["-r", "-R", "-rf", "-fr", "-Rf", "--recursive"]}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "rm -rf dir; may include untracked content"
+- id: git_clean_force
+  match: {family: git, sub: clean, flags_any: ["-f", "-fd", "-fx", "-fdx", "--force"]}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "deletes untracked/ignored files"
+- id: git_reset_hard
+  match: {family: git, sub: reset, flags_any: ["--hard"]}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "discards uncommitted changes"
+
+# --- git local ---
+- id: git_commit
+  match: {family: git, sub: commit, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "undoable with reset"
+- id: git_branch
+  match: {family: git, sub: branch, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "local ref only"
+- id: git_branch_delete_unmerged
+  match: {family: git, sub: branch, flags_any: ["-D"]}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "force-deletes a branch; unmerged commits are lost; more specific than git_branch"
+- id: git_stash
+  match: {family: git, sub: stash, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "local stash"
+- id: git_stash_drop
+  match: {family: git, sub: stash, flags_any: ["drop", "clear"]}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "permanently deletes stashed work; more specific than git_stash"
+
+# --- git remote ---
+- id: git_push
+  match: {family: git, sub: push, flags_any: []}
+  reversible: true
+  scope: shared
+  privilege: false
+  note: "fast-forward push; revertible"
+- id: git_push_force
+  match: {family: git, sub: push, flags_any: ["--force", "-f", "--force-with-lease"]}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "rewrites remote history; same level as push, higher-priced cell"
+- id: git_push_delete
+  match: {family: git, sub: push, flags_any: ["--delete", "-d"]}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "deletes remote branch"
+
+# --- SQL ---
+- id: sql_insert_local
+  match: {family: sql, sub: insert, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "local dev DB; shared/prod DB matches sql_write_shared via db_scope"
+- id: sql_update_where_local
+  match: {family: sql, sub: update_where, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "local dev DB, UPDATE with WHERE"
+- id: sql_drop_local
+  match: {family: sql, sub: drop, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "local dev DB"
+- id: sql_truncate_local
+  match: {family: sql, sub: truncate, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "local dev DB"
+- id: sql_delete_no_where_local
+  match: {family: sql, sub: delete_no_where, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "local dev DB, DELETE without WHERE"
+- id: sql_write_shared
+  match: {family: sql, sub: write_shared, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "any write statement where db_scope resolves shared/prod"
+
+# --- migrations ---
+- id: migrate_local
+  match: {family: migrate, sub: local, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  note: "migration against local dev DB"
+- id: migrate_shared
+  match: {family: migrate, sub: shared, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "migration against shared/prod DB"
+
+# --- packages / artifacts ---
+- id: npm_install
+  match: {family: pkg, sub: npm_install, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "local dependency install"
+- id: pip_install
+  match: {family: pkg, sub: pip_install, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  note: "local dependency install"
+- id: npm_publish
+  match: {family: pkg, sub: npm_publish, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "public registry publish"
+- id: docker_push
+  match: {family: docker, sub: push, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "registry push"
+- id: twine_upload
+  match: {family: pkg, sub: twine_upload, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "PyPI upload"
+
+# --- cluster / infra ---
+- id: kubectl_apply
+  match: {family: kubectl, sub: apply, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates cluster"
+- id: kubectl_delete
+  match: {family: kubectl, sub: delete, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates cluster"
+- id: kubectl_scale
+  match: {family: kubectl, sub: scale, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates cluster"
+- id: kubectl_rollout
+  match: {family: kubectl, sub: rollout, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates cluster"
+- id: helm_upgrade
+  match: {family: helm, sub: upgrade, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates cluster"
+- id: terraform_apply
+  match: {family: terraform, sub: apply, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "mutates infra"
+- id: terraform_destroy
+  match: {family: terraform, sub: destroy, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "destroys infra"
+
+# --- outbound network ---
+- id: http_post_external
+  match: {family: http, sub: post, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "payload to external host; localhost/allowlisted hosts resolve local"
+- id: http_put_external
+  match: {family: http, sub: put, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "payload to external host"
+- id: http_delete_external
+  match: {family: http, sub: delete, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "mutation on external host"
+
+# --- secrets ---
+- id: secret_echo_var
+  match: {family: secret, sub: echo_var, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "echo $*KEY*/$*TOKEN*/$*SECRET*; disclosure into transcript/logs"
+- id: secret_cat_env
+  match: {family: secret, sub: cat_env, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "cat .env; disclosure into transcript/logs"
+- id: secret_printenv
+  match: {family: secret, sub: printenv, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  note: "dumps environment; disclosure into transcript/logs"
+
+# --- CI ---
+- id: ci_github_workflow_edit
+  match: {family: ci, sub: github_workflows, flags_any: []}
+  reversible: true
+  scope: shared
+  privilege: false
+  note: ".github/workflows/* affects shared pipeline"
+- id: ci_gitlab_edit
+  match: {family: ci, sub: gitlab_ci, flags_any: []}
+  reversible: true
+  scope: shared
+  privilege: false
+  note: ".gitlab-ci.yml affects shared pipeline"
+
+# --- privilege / persistence ---
+- id: chmod_777
+  match: {family: chmod, sub: null, flags_any: ["777", "a+rwx", "o+w"]}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "world-writable permissions"
+- id: chown
+  match: {family: chown, sub: null, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "ownership change"
+- id: usermod
+  match: {family: usermod, sub: null, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "sudo usermod; group/user privilege change"
+- id: ssh_key_add
+  match: {family: ssh, sub: authorized_keys, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "adds SSH access"
+- id: crontab
+  match: {family: crontab, sub: null, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "persistence"
+- id: systemctl_enable
+  match: {family: systemctl, sub: enable, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "persistence"
+- id: kubectl_create_rolebinding
+  match: {family: kubectl, sub: create_rolebinding, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: true
+  note: "grants cluster access"
+
+# --- deploy ---
+- id: deploy_trigger
+  match: {family: deploy, sub: null, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "deploy script / deploy tool call"
+
+# --- fallback ---
+- id: unknown
+  match: {family: unknown, sub: null, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  note: "unrecognized command; conservative default"
