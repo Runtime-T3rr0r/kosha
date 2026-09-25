@@ -1,0 +1,10 @@
+.env
+config/kosha.yaml
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+*.sqlite
+*.db
+node_modules/
+dist/

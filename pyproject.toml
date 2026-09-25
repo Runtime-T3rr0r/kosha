@@ -1,0 +1,16 @@
+[project]
+name = "kosha"
+version = "0.0.1"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["pyyaml"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["kosha*"]

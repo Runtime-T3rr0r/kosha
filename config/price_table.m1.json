@@ -1,0 +1,17 @@
+{
+  "version": "m1-2026-09-25",
+  "method": "hand",
+  "unit_budget": 100,
+  "cells": {
+    "rev|local|nopriv":      {"price": 2,  "n": null, "p_high": null},
+    "irrev|local|nopriv":    {"price": 10, "n": null, "p_high": null},
+    "rev|shared|nopriv":     {"price": 30, "n": null, "p_high": null},
+    "irrev|shared|nopriv":   {"price": 40, "n": null, "p_high": null},
+    "rev|external|nopriv":   {"price": 30, "n": null, "p_high": null},
+    "irrev|external|nopriv": {"price": 45, "n": null, "p_high": null},
+    "*|*|priv":              {"price": 60, "n": null, "p_high": null}
+  },
+  "fleet_budget": 100,
+  "agent_cap": 50,
+  "window_minutes": 30
+}
