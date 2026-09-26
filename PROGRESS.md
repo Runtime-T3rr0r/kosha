@@ -306,7 +306,9 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 
 **Status of other items at this checkpoint:**
 - **Raw redaction: NOT done.** Proposed, not started; the token and fingerprint work took priority. Open tension: approvers must see the content, since hiding it was one of the gaps just closed. A workable split is to mask token-like values everywhere but hash file bodies only in `events` and `actions.raw`, never in the approval bundle. Awaiting a decision.
-- **Approval-token bypass in `policy.py`:** the teammate is fixing it. **Not closed.** Before logging it closed: pull their diff, confirm the exemption is removed (not just harder to trigger), and personally re-run the `approval_token: "i-made-this-up"` + `drop database app` on prod reproduction and see it deny.
+- **Approval-token bypass in `policy.py`: CLOSED, verified 2026-09-27.** Teammate commit `aa15ad0` ("removes the approval_token override on hard-deny patterns"). Checked by me, not taken on the commit message:
+  - **The diff removes the exemption outright:** `_has_approval_token` is deleted, the prod-drop hard deny is unconditional (`if _drops_prod_db(action): return ...`), and the "attach an approval token" suggestion is replaced with "Hard-deny patterns have no override". `grep` finds no reader of `approval_token` left in `kosha/`; the only references are the adapters' strip lists.
+  - **Re-ran tonight's reproduction** against the rebased tree. **Direct `/decide`** with `raw: {db: prod, sql: "drop database app", approval_token: "i-made-this-up"}`, bypassing the adapters' stripping so it tests the policy fix itself, gives **deny / hard_deny** (tonight: allow / ok). Through kosha-mcp it gives `KOSHA DENIED`. Full suite on the rebased tree: 799 passed.
 
 **`kosha/system/fs_guard.py`** (layer 3, the backup lock):
 - **What it does:** a watchdog/inotify watcher on a working tree, handling created, modified, deleted and moved events. A change covered by an unexpired `expected_writes` lease is accepted and becomes the new restore point. Anything else is undone and logged as `bypass_detected` (`{event, path, outcome, root}`):
