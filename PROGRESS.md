@@ -74,7 +74,7 @@ Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js
   - ask/deny return `is_error` with the reason and suggestion. For ask, it also tells the agent to retry the same call once a human approves.
   - Any exception inside the handler becomes an `is_error` result that says "nothing was run". Nothing surfaces as a success.
 - **Identity:** `resolve_agent_id()` as specified, defaulting to `per_mode_instance` (`--agent <mode slug>`). One tweak: inline mode falls back to the instance name instead of returning `None`.
-  - Bob's MCP entry supports a `groups` field ("Restrict the server's tools to specific modes"), so each instance can be pinned to its own mode. Without that, any mode could call another mode's instance and borrow its identity. **Confirm `groups` actually enforces this in a live Bob run.**
+  - Pinning each instance to its mode with the MCP entry's `groups` field: see "Verification: groups, MCP timeout, hook fail-open" below. It's enforced at execution time in Bob's source, but not yet tested in a live IDE session, and it comes with caveats.
 - `db_exec` supports sqlite aliases only (the demo's dev/prod). Relative sqlite paths resolve against the kosha repo root, and it never echoes a DB URL. `deploy` runs `KOSHA_DEPLOY_CMD` (default `./deploy.sh <target>`) in the workspace.
 - **Write leases:** on allow, `/decide` now records `expected_writes` in the *same* transaction. File tools lease their exact path for 30s; commands lease their cwd for 300s; `db_exec` leases nothing. Settle shrinks the lease to a 2s grace. The `expected_writes` key became `(path, action_id)`, so concurrent commands in one directory don't clobber each other's lease. `match_expected` treats a directory lease as covering everything under it.
   - **Known gap:** while a gated command runs, a native bypass write under the same cwd is indistinguishable from the command's own and gets accepted. Layers 1 and 2 (mode groups, kosha-hook) still stop it.
@@ -95,7 +95,81 @@ Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js
                  "timeout": 300000}
 }}
 ```
-Repeat for each mode, giving every instance the same `--session`. `alwaysAllow` is safe here because kosha makes the decision. Keep `timeout` at or above 270s so long commands aren't cut off by Bob. Start `koshad` first. I'll put the demo's real copy of this in `demo_repo/.bob/` in task 10.
+Repeat for each mode, giving every instance the same `--session`. `groups` must be exactly the mode's **slug** and nothing else (no `"mcp"`). `alwaysAllow` is safe here because kosha makes the decision. `timeout` is in **ms**, and Bob's default is **60s** (corrected below; my earlier "270s" was execute_command's limit, not MCP's). Set 300000 so Bob doesn't abandon a call that kosha-mcp is still running (kosha-mcp's own command limit is 270s). Start `koshad` first. I'll put the demo's real copy of this in `demo_repo/.bob/` in task 10.
+
+## 2026-09-26: Verification: groups, MCP timeout, hook fail-open
+
+**How this was verified, and its limits.** There is no `bob run` on this machine: the install is Bob IDE only (`bob` is the IDE launcher, and the only other binary is `bobide-tunnel`). Running a real two-mode agent session needs the GUI plus an interactive, model-backed session, so **(a) is verified from Bob's source, not live**. (c) is verified by **executing Bob's own hook-runner functions**, extracted verbatim from `bob-code/dist/extension.js` (Bob 1.126.0+bob2.2.0), against 34 real hook scripts under Node v26. Bob itself ships Electron 42. The runner uses `child_process.exec`, whose timeout, kill and maxBuffer behaviour is the same across those versions. No credentials were read; `~/.bob/settings/settings.json` holds only a migration flag.
+
+### (a) Does MCP `groups` restrict which mode can call an instance? Yes in the source, with caveats. Not yet tested live.
+
+Code path:
+- MCP tool: `this.groups = yVt(serverConfig)`, which is `serverConfig.groups` if it's an array, else `["mcp"]`.
+- Mode: `getGroupIds(mode)` is `[...mode.groups, mode.id]`, so **the mode's own slug counts as a group**.
+- `getToolsForMode(mode)` keeps only tools whose `groups` overlap `getGroupIds(mode)`.
+- **Enforced at execution, not just hidden from the prompt.** Before every tool call, `N2r()` does `if (!getCurrentAllowedTools().includes(tool.id)) return {isError: true, "Tool X is not allowed to be executed. Swap to a mode that can use ..."}`.
+
+So `"groups": ["sub1"]` on `kosha-sub1` means only the mode with slug `sub1` can list *or* execute its tools. A call from mode `sub2` is rejected. **Caveats. These are real gaps, not footnotes:**
+1. **Mode switching changes identity.** `switch_mode` is in the `mode` permission group. If an agent in `sub1` can switch to `sub2`, its calls then legitimately go through `kosha-sub2` and are charged to `sub2`'s cap, so it can escape its own cap. **Fix:** leave `mode` (and `subagent`/`subtask`, unless needed) out of the fleet modes' `groups`. Still to be confirmed live.
+2. **Any `"mcp"` in the server's `groups` opens it to every mode that has the `mcp` group.** It must be the slug only.
+3. **Bob's own guidance contradicts its code.** The bundled `configure-mcp` skill text says `groups` "must match known Bob permission groups (read, edit, execute, mcp, ...). Anything else silently grants nothing." The code (`getGroupIds` appends `mode.id`) says a slug works. Code wins, but this is exactly what the live test must settle.
+4. **Kosha's own config is writable by the agent it governs.** `.bob/mcp.json`, `.bob/custom_modes.yaml` and `.bob/settings.json` (where the hooks live) sit in the workspace. An agent can rewrite `groups` or delete the hook through `kosha-mcp write_file` or a native edit. **Proposed fix (my side, not done yet):** the parser prices any write under `.bob/` or `.claude/` as privilege (L5, always ask).
+5. **Subagent mode inheritance is unverified.** `spawn_subagent` builds a subtask from a preset's groups (`createSubTask(preset, groups)`). I haven't traced whether custom-mode subagents keep their own slug.
+
+**The live test (about 5 minutes in the IDE):** register `kosha-sub1` with `"groups": ["sub1"]`, create modes `sub1` and `sub2` (both with the `mcp` group), open a task in `sub2` and ask it to call `run_command` on `kosha-sub1`. **Expected from the source:** the tool isn't offered, and a forced call returns "Tool mcp__kosha-sub1__run_command is not allowed to be executed". Then repeat from `sub1`, which should succeed and record `agent_id=sub1` in `koshad`.
+
+### (b) MCP tool-call timeout: 60s by default, not 270s
+
+- **270s is `execute_command`'s own limit** (`static MAX_TIMEOUT_SECONDS=270; DEFAULT_TIMEOUT_SECONDS=30`). I had conflated it with MCP.
+- **MCP tool calls:** `runToolWithRestart` calls `session.callTool(name, args, {timeout: serverConfig.timeout})`. The bundled MCP client defaults an unset timeout to `fX = 6e4`, i.e. **60,000 ms** (`let _ = a?.timeout ?? fX`). Only `{timeout}` is passed, so progress notifications do **not** extend it.
+- **Units are ms.** The settings UI snaps values to `5000, 10000, 30000, 60000, 120000, 300000, 600000, 1800000, 3600000`; anything else becomes 60000. Values in `mcp.json` are used as written.
+- **Consequence:** with the default, Bob abandons any kosha-mcp call after 60s while the command keeps running inside kosha-mcp (up to 270s), and the agent may retry and run it twice. **Set `"timeout": 300000`.**
+- Hook timeouts are separate: the default is `tei = 10` **seconds**, set by the per-hook `timeout` field (seconds).
+
+### (c) What Bob's PreToolUse runner treats as allow (fail-open). Executed, not inferred
+
+Only two things block:
+- **exit code 2**: the reason is stderr, else stdout, else "PreToolUse blocked by hook". Stdout JSON is ignored, even if it says allow.
+- **exit 0** where the entire trimmed stdout is JSON starting with `{` containing `hookSpecificOutput.hookEventName == "PreToolUse"` and `hookSpecificOutput.permissionDecision == "deny"`, exact lowercase.
+
+**Everything else allows:**
+
+| Allowed (fail-open) | Bob's log line |
+|---|---|
+| exit 1, 3, 130, 255: any nonzero except 2 (an uncaught Python exception is exit 1) | `hook exited with code N` |
+| exit 1 **with** a valid JSON deny on stdout | `exited with code 1` |
+| exit 127: interpreter or script not found (e.g. wrong venv path) | `exited with code 127` |
+| killed by any signal (SIGTERM, SIGKILL, **SIGALRM with no handler installed**) | `hook failed` |
+| hook exceeds its `timeout` | `hook failed` |
+| **stdout or stderr over 1MB, even with exit 2** (maxBuffer) | `hook failed` |
+| task `cwd` doesn't exist (the hook can't spawn) | `hook failed` |
+| exit 0 with malformed JSON, plain text, or **any log line before the JSON** | `Ignoring invalid PreToolUse hook output` |
+| exit 0 with JSON deny but `hookEventName` missing or wrong, or deny at top level, or `"DENY"` | (silent) |
+| exit 0 with `permissionDecision: "ask"` | (silent) |
+| exit 0, no output | (silent) |
+| hook entry `disabled: true` | (silent) |
+| invalid matcher regex | `Ignoring invalid ... matcher` |
+| (from source, not executed) settings file fails Bob's strict schema, e.g. one unknown key: the **whole file's hooks are dropped** | `Ignoring invalid hook settings in <file>` |
+| (from source) workspace hooks when the workspace isn't trusted, or `disableWorkspaceHooks` / `disableGlobalHooks` set | (silent) |
+
+Also:
+- **Matchers are unanchored `RegExp.test` on `tool_name`.** `write_file` also matches kosha's own `mcp__kosha-sub1__write_file` (MCP tool ids are `mcp__<server>__<tool>`, max 64 chars). **Anchor them:** `^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$`.
+- If several hooks match, **any one blocking blocks**: one failing open doesn't cancel another's deny.
+- The hook runs once, before Bob's own approval prompt. Resumed (approved) calls don't re-run it; that's by design, not a bypass.
+- Subagent tasks inherit the parent's `onPreToolUse`, so hooks cover subagents.
+
+**What kosha-hook (task 8) must do, from the above:**
+1. Install the SIGALRM handler as the **first statement**, before importing anything heavy. An alarm that fires before the handler exists kills the process, and a killed hook means allow.
+2. Keep the alarm well under Bob's hook timeout (default 10s; set `timeout` explicitly).
+3. **Deny = `exit 2` with the reason on stderr.** Don't rely on JSON deny.
+4. Print nothing else to stdout.
+5. Cap all output far below 1MB.
+6. Normalise **every** error path to exit 2.
+7. Register the hook with the **absolute** interpreter path.
+8. Anchor the matcher.
+9. Keep the settings file schema-exact.
+
+Harness used for (c): `bob_hooks_extracted.js` and `harness.js` in the session scratchpad. Not committed; I can add them under `docs/` if you want the result reproducible.
 
 ## Next (task 7 onward), not started
 claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
