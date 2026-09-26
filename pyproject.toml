@@ -3,7 +3,10 @@ name = "kosha"
 version = "0.0.1"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["pyyaml"]
+dependencies = ["pyyaml", "fastapi", "uvicorn", "requests", "watchdog", "bashlex", "mcp"]
+
+[project.scripts]
+koshad = "kosha.api.server:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
