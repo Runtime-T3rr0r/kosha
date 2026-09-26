@@ -23,9 +23,18 @@ BOB_HOOK_EVENTS = {"SessionStart", "UserPromptSubmit", "PreCompact", "PostCompac
                    "PreToolUse", "PostToolUse", "Stop"}
 
 
+@pytest.fixture(autouse=True)
+def no_live_koshad(monkeypatch):
+    # tests must not depend on whether a real koshad is running on this machine's 8765;
+    # the refuse-while-running guard has its own test that turns this back on
+    monkeypatch.setattr(setup_demo, "koshad_running", lambda port=8765: False)
+
+
 @pytest.fixture(scope="module")
 def demo(tmp_path_factory):
-    return setup_demo.build(tmp_path_factory.mktemp("d") / ".demo")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(setup_demo, "koshad_running", lambda port=8765: False)
+        return setup_demo.build(tmp_path_factory.mktemp("d") / ".demo")
 
 
 @pytest.fixture
