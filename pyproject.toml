@@ -7,6 +7,7 @@ dependencies = ["pyyaml", "fastapi", "uvicorn", "requests", "watchdog", "bashlex
 
 [project.scripts]
 koshad = "kosha.api.server:main"
+kosha-mcp = "kosha.adapters.bob_mcp:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]
