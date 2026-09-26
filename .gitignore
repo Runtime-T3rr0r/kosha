@@ -9,3 +9,5 @@ __pycache__/
 node_modules/
 dist/
 bench/data/
+*.db-shm
+*.db-wal
