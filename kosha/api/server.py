@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from kosha.pricing import policy
 from kosha.pricing.pricing import load_table
+from kosha.system import parser
 from kosha.system.action import Action, Harness, Tool
 from kosha.system.kosha_db import KoshaDB
 
@@ -51,9 +52,8 @@ def coerce_action(body: dict) -> Action:
 
 
 def classify(action: Action) -> tuple[int, str]:
-    """(level, cell) for an action. Placeholder until parser.py exists: everything is
-    priced as the conservative unknown cell."""
-    return UNKNOWN_LEVEL, UNKNOWN_CELL
+    c = parser.classify(action)
+    return c.level, c.cell
 
 
 class Settle(BaseModel):

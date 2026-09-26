@@ -1,0 +1,14 @@
+# Copy to config/kosha.yaml (gitignored) and fill in. Never commit the copy.
+#
+# databases: alias -> {url, scope}. scope "shared" makes any write SQL or migration
+# against it price as cross-scope (L4). "prod" must point at a DISPOSABLE database.
+databases:
+  dev:
+    url: "sqlite:///demo_repo/dev.db"
+    scope: local
+  prod:
+    url: "<disposable-db-url>"
+    scope: shared
+
+# Extra hosts treated as local for HTTP writes (loopback is always local).
+local_hosts: []

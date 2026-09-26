@@ -81,3 +81,10 @@ def test_stream_emits_events(api):
 def test_price_table(api):
     t = api.get("/price_table").json()
     assert "cells" in t and t["fleet_budget"] == 100
+
+
+def test_decide_uses_the_parser(api):
+    ls = api.post("/decide", json=action(action_id="r1", argv=["ls"], raw={"command": "ls"})).json()
+    push = api.post("/decide", json=action(action_id="r2", raw={"command": "git push -f origin main"})).json()
+    assert (ls["level"], ls["price"]) == (0, 0)
+    assert (push["level"], push["cell"]) == (4, "irrev|shared|nopriv")
