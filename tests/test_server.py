@@ -1,4 +1,7 @@
 """koshad endpoint contract, via FastAPI's TestClient against a temp DB."""
+import json
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -80,7 +83,7 @@ def test_stream_emits_events(api):
 
 def test_price_table(api):
     t = api.get("/price_table").json()
-    assert "cells" in t and t["fleet_budget"] == 100
+    assert t == json.loads((Path(__file__).resolve().parents[1] / "config/price_table.m1.json").read_text())
 
 
 def test_decide_uses_the_parser(api):
