@@ -90,8 +90,7 @@ class Resolve(BaseModel):
 def create_app(db: Optional[KoshaDB] = None) -> FastAPI:
     table = load_table()
     if db is None:
-        db = KoshaDB(fleet_budget=table["fleet_budget"], agent_cap=table["agent_cap"],
-                     window_minutes=table["window_minutes"])
+        db = KoshaDB()
     app = FastAPI(title="koshad")
     app.state.db = db
 

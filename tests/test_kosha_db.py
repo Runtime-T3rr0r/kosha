@@ -202,3 +202,11 @@ def test_settle_shrinks_lease_to_grace(db, monkeypatch):
     db.decide(a, 3, L3_CELL, policy_decide, write_leases=(("/r/app.py", 300),))
     db.settle(a.action_id, "failure")
     assert db.match_expected("/r/app.py") is None
+
+
+def test_budgets_default_to_the_price_table(tmp_path):
+    from kosha.pricing.pricing import load_table
+    t = load_table()
+    d = KoshaDB(tmp_path / "t.db")
+    assert (d.fleet_budget, d.agent_cap, d.window.total_seconds()) == \
+        (t["fleet_budget"], t["agent_cap"], t["window_minutes"] * 60)

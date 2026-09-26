@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from kosha.pricing.policy import Decision, LedgerState
-from kosha.pricing.pricing import price as cell_price
+from kosha.pricing.pricing import load_table, price as cell_price
 from kosha.system.action import Action
 
 FLEET = "__fleet__"        # accounts row holding the fleet-wide total for a session
@@ -96,12 +96,14 @@ def fingerprint(action: Action) -> str:
 
 
 class KoshaDB:
-    def __init__(self, path: Optional[str | Path] = None, *, fleet_budget: float = 100,
-                 agent_cap: float = 50, window_minutes: float = 30):
+    def __init__(self, path: Optional[str | Path] = None, *, fleet_budget: Optional[float] = None,
+                 agent_cap: Optional[float] = None, window_minutes: Optional[float] = None):
+        """Budgets default to the current price table, so no caller runs on stale numbers."""
+        table = load_table()
         self.path = str(path or os.environ.get("KOSHA_DB") or DEFAULT_DB)
-        self.fleet_budget = fleet_budget
-        self.agent_cap = agent_cap
-        self.window = timedelta(minutes=window_minutes)
+        self.fleet_budget = table["fleet_budget"] if fleet_budget is None else fleet_budget
+        self.agent_cap = table["agent_cap"] if agent_cap is None else agent_cap
+        self.window = timedelta(minutes=table["window_minutes"] if window_minutes is None else window_minutes)
         with self._conn() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript(SCHEMA)
