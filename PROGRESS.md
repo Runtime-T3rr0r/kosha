@@ -417,5 +417,27 @@ Full suite: 760 passed.
 
 **koshad restarted on current code:** stale pid 91316 stopped. `setup_demo.py` built a fresh `.demo/`, and `.demo/start_koshad.sh` runs as pid 183874 on 127.0.0.1:8765, with env `KOSHA_DB=.demo/kosha.db`, `KOSHA_CONFIG=.demo/kosha.demo.yaml`, `KOSHA_GUARD_ROOT=.demo/work` and `KOSHA_GUARD_SESSION=release-1.3`. A made-up-token probe was hard-denied (current code); its rows were removed, and the ledger is empty. **Order to reset before recording:** stop koshad → run `setup_demo.py` → start `.demo/start_koshad.sh`. Rebuilding while koshad runs deletes its open DB.
 
+## 2026-09-27: window_touches done, verified live
+
+- **`kosha_db.decide()` now passes `LedgerState.window_touches`,** so the teammate's convergence rule ("two or more agents acting on the same typed target in one window asks") can fire. Before this, nothing called `convergence.touch()`. Per spec: one `convergence.touch(action, level)` per window action, oldest first (`created_at, rowid`), for status `reserved`, `confirmed` **or `pending`** (an ask counts as soon as it's asked). Each is rebuilt from the stored `tool/argv/targets/raw/cwd` columns. **Escalation's `recent_actions` and the approval bundle keep reading reserved/confirmed only;** widening them would silently change two other rules.
+- **Suite: 822 → 829 passed.** 7 new tests:
+  - a second agent on the same target is held
+  - the same agent or a different target is not
+  - pending counts
+  - denied, cancelled and L0 actions don't touch
+  - pending doesn't feed escalation
+  - oldest-first ordering and window scoping
+  - **convergence can't be raced:** 200 barrier-released same-target races, always exactly one allow plus one convergence ask
+
+  **Two existing tests failed, and they were not regressions:** `test_ask_creates_approval…` and `test_fleet_budget_race…` both had two agents `rm x.txt` (the same target by accident), so convergence now correctly held the second. Their fixtures now use distinct targets, so each tests what it's named for. **Mutation-checked:** with touches stubbed to `[]`, the 4 positive tests fail.
+- **Live, against a koshad restarted on the new code** (pid 204602), through real kosha-mcp HTTP with the demo workspace:
+  - `release-bump`'s `git push origin main` was allowed.
+  - **`test-fix`'s `git push origin main` was held:** `KOSHA HELD FOR HUMAN APPROVAL ... target convergence. release-bump already acted on branch:main this window`; nothing ran. `/approvals` held it with both pushes in the bundle, and `/stream` showed `approval_requested rule=convergence`.
+  - A control `git status` from `test-fix` was allowed.
+  - **The curl-on-camera beat:** `curl -X POST /approvals/1 {"decision":"approve_once"}`, then the retry of the exact call ran.
+  - The throwaway session's rows were removed; the demo ledger is empty.
+- **`batch_id` is NOT implemented,** on hold until it's confirmed whether batch escalation is on task 11's demo path.
+- **Teammate gap found (`convergence.targets_of`, not touched):** path targets from command text aren't resolved against `action.cwd`, while file tools send absolute paths. So `edit_file VERSION` (`path:/…/work/VERSION`) and `sed -i … VERSION` (`path:VERSION`) **don't converge on the same file.** Suggested one-line fix: `command_targets(str(command), action.cwd)`. **Task 11 must make the two colliding agents use the same form** (e.g. both `git push` the same branch, or both use file tools on the same file).
+
 ## Next (task 11 onward), not started
 demo scenario → web/.
