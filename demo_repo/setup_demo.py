@@ -61,7 +61,7 @@ Rules:
 3. A result that starts with "KOSHA DENIED" means nothing ran and retrying the same call will be denied again. Follow the suggestion in the message, or ask the user.
 4. A result that starts with "KOSHA UNAVAILABLE" means Kosha could not decide and nothing ran. Tell the user, and retry the same call once they say Kosha is back.
 5. Never report a held, denied or unavailable step as done.
-6. kosha_review shows what is held and why. Call kosha_approve only when the user explicitly tells you which held action to approve or deny; Bob asks the user to confirm it before it runs. Never approve a held action on your own initiative."""
+6. kosha_review shows what is held and why. Only the human approves or denies held actions, on the Kosha approval page; never try to approve one yourself."""
 
 NATIVE_MATCHER = "^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$"
 
@@ -147,8 +147,6 @@ def bob_config(root: Path, work: Path, config: Path) -> None:
         "args": ["--agent", slug, "--session", SESSION, "--workspace", str(work)],
         "env": env,
         "groups": [slug],                   # only the mode with this slug sees these tools
-        # kosha_approve is deliberately NOT here: Bob then asks the human before every call,
-        # so an agent can request an approval but only a human can grant it
         "alwaysAllow": ["run_command", "edit_file", "write_file", "git", "db_exec", "deploy",
                         "kosha_review"],
         "timeout": 300000,                  # ms; Bob's default is 60s

@@ -93,9 +93,14 @@ def _get(url: str):
     return json.load(urllib.request.urlopen(url, timeout=5))
 
 
+PASSPHRASE = "rehearsal-only-passphrase"
+
+
 def _post(url: str, body: dict):
+    # exactly what the /ui page sends when the human clicks a button
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                 headers={"content-type": "application/json"})
+                                 headers={"content-type": "application/json",
+                                          "X-Kosha-Approval": PASSPHRASE})
     return json.load(urllib.request.urlopen(req, timeout=5))
 
 
@@ -118,7 +123,7 @@ def run(root: Path, out=print) -> list[str]:
     client.KOSHAD_URL = url
 
     db = KoshaDB(world["root"] / "kosha.db")
-    server = uvicorn.Server(uvicorn.Config(create_app(db, guard_root=str(work)), host="127.0.0.1",
+    server = uvicorn.Server(uvicorn.Config(create_app(db, guard_root=str(work), approval_passphrase=PASSPHRASE), host="127.0.0.1",
                                            port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -152,8 +157,8 @@ def run(root: Path, out=print) -> list[str]:
         play(STORY)
 
         pending = {a["agent_id"]: a for a in _get(f"{url}/approvals")}
-        human_tab = gateways["migrate-deploy"]          # the human types into the held tab
-        out("\n== human, in the migrate-deploy tab: \"Show me what Kosha is holding.\" -> kosha_review")
+        human_tab = gateways["migrate-deploy"]
+        out("\n== in the migrate-deploy tab: \"Show me what Kosha is holding.\" -> kosha_review")
         out("\n".join("   " + ln for ln in human_tab.call("kosha_review", {"arguments": {}, "_meta": {}})[1].splitlines()))
         mig, push = pending.get("migrate-deploy"), pending.get("test-fix")
         if not (mig and push):
@@ -161,12 +166,10 @@ def run(root: Path, out=print) -> list[str]:
         else:
             for aid, decision, note in ((push["id"], "deny", "main was already pushed"),
                                         (mig["id"], "approve_reset", None)):
-                args = {"approval_id": aid, "decision": decision, **({"note": note} if note else {})}
-                # in Bob, this call waits for the human to click Approve in Bob's own prompt
-                is_error, text = human_tab.call("kosha_approve", {"arguments": args, "_meta": {}})
-                out(f"== human confirms in Bob's prompt: kosha_approve #{aid} {decision} -> {text}")
-                if is_error:
-                    problems.append(f"kosha_approve #{aid} {decision} failed: {text}")
+                status = _post(f"{url}/approvals/{aid}", {"decision": decision, "note": note}).get("status")
+                out(f"== human, on the approval page (passphrase): #{aid} {decision} -> {status}")
+                if status != decision:
+                    problems.append(f"approval #{aid} {decision}: got {status}")
             out("")
             play(AFTER_APPROVAL)
 

@@ -272,7 +272,7 @@ def test_tool_descriptions_say_reads_are_free():
         assert "read-only calls are free" in t.description and "don't ration normal work" in t.description
 
 
-# --- kosha_review / kosha_approve: the approval queue from inside Bob ---
+# --- kosha_review: the approval queue, read-only, from inside Bob ---
 
 def test_review_shows_held_actions_with_their_bundle(live_koshad, ws):
     g = gw(ws)
@@ -289,51 +289,18 @@ def test_review_with_nothing_held(live_koshad, ws):
     assert gw(ws).call("kosha_review", raw({})) == (False, "Nothing is held for approval.")
 
 
-def test_approve_records_the_humans_decision_and_the_retry_runs(live_koshad, ws):
-    (ws / "run.sh").write_text("echo hi\n")
+def test_review_is_not_priced_or_recorded_as_an_action(live_koshad, ws):
     g = gw(ws)
     g.call("run_command", raw({"command": "chmod 777 run.sh"}))
-    [ap] = live_koshad.db.pending_approvals()
-    is_error, text = g.call("kosha_approve", raw({"approval_id": ap["id"], "decision": "approve_once"}))
-    assert not is_error and "can now be retried" in text
-    assert g.call("run_command", raw({"command": "chmod 777 run.sh"}))[0] is False    # ran
-
-
-def test_approve_and_review_are_not_priced_or_recorded_as_actions(live_koshad, ws):
-    g = gw(ws)
-    g.call("run_command", raw({"command": "chmod 777 run.sh"}))
-    [ap] = live_koshad.db.pending_approvals()
     g.call("kosha_review", raw({}))
-    g.call("kosha_approve", raw({"approval_id": ap["id"], "decision": "deny", "note": "no"}))
     assert [r["tool"] for r in rows(live_koshad, "SELECT tool FROM actions")] == ["run_command"]
 
 
-@pytest.mark.parametrize("args, needle", [
-    ({"approval_id": 1, "decision": "yolo"}, "decision must be"),
-    ({"approval_id": "abc", "decision": "deny"}, "approval_id must be"),
-    ({"approval_id": 999, "decision": "deny"}, "No held action #999"),
-])
-def test_approve_rejects_bad_input(live_koshad, ws, args, needle):
-    is_error, text = gw(ws).call("kosha_approve", raw(args))
-    assert is_error and needle in text
+def test_review_with_koshad_down(dead_koshad, ws):
+    is_error, text = gw(ws).call("kosha_review", raw({}))
+    assert is_error and "not responding" in text
 
 
-def test_approve_twice_changes_nothing(live_koshad, ws):
-    g = gw(ws)
-    g.call("run_command", raw({"command": "chmod 777 run.sh"}))
-    [ap] = live_koshad.db.pending_approvals()
-    g.call("kosha_approve", raw({"approval_id": ap["id"], "decision": "deny"}))
-    is_error, text = g.call("kosha_approve", raw({"approval_id": ap["id"], "decision": "approve_once"}))
-    assert is_error and "already resolved (deny)" in text
-
-
-def test_review_and_approve_with_koshad_down(dead_koshad, ws):
-    assert gw(ws).call("kosha_review", raw({}))[0] is True
-    is_error, text = gw(ws).call("kosha_approve", raw({"approval_id": 1, "decision": "approve_once"}))
-    assert is_error and "nothing was recorded" in text
-
-
-def test_approve_tool_says_a_human_confirms():
-    t = next(t for t in bob_mcp.TOOLS if t.name == "kosha_approve")
-    assert "USER's decision" in t.description and "Bob asks the user to confirm" in t.description
-    assert t.input_schema["properties"]["decision"]["enum"] == ["approve_once", "approve_reset", "deny"]
+def test_there_is_no_approve_tool():
+    # approving needs the human's passphrase, which must never enter the agent's chat
+    assert not any("approve" in t.name for t in bob_mcp.TOOLS)
