@@ -2,6 +2,8 @@
 import pytest
 
 from kosha.pricing.match import match_command, segments, sql_sub
+from kosha.pricing.policy import SINGLE_AGENT_CONSEQUENTIAL
+from kosha.pricing.rubric import classify
 
 
 def mid(cmd: str) -> str:
@@ -93,6 +95,11 @@ def mid(cmd: str) -> str:
     ("psql -d production -f migrations/001.sql", "sql_write_shared"),
     ("psql -c DELETE FROM users WHERE id = 1", "sql_delete_where_local"),
     ("psql -c DELETE FROM users", "sql_delete_no_where_local"),
+    ("xmrig", "crypto_miner"),
+    ("./xmrig -o pool.example.com:3333 -u wallet", "crypto_miner"),
+    ("nohup /tmp/xmrig --donate-level 1", "crypto_miner"),
+    ("stress --cpu 8 --timeout 600", "stress_load"),
+    ("stress-ng --vm 4 --vm-bytes 90%", "stress_load"),
 ])
 def test_specificity(cmd, expected):
     assert mid(cmd) == expected
@@ -262,3 +269,19 @@ def test_kubectl_namespace_before_mutating_subcommands():
 
 def test_sudo_through_npx_keeps_privilege():
     assert match_command("sudo npx playwright test".split())["privilege"] is True
+
+
+@pytest.mark.parametrize("cmd", ["stress --cpu 8", "stress-ng --vm 4", "xmrig -o pool:3333"])
+def test_resource_hijacking_never_drops_below_the_single_agent_escalation_threshold(cmd):
+    r = match_command(cmd.split())
+    level = classify(r["reversible"], r["scope"], r["privilege"])
+    assert level >= SINGLE_AGENT_CONSEQUENTIAL == 4
+
+
+@pytest.mark.parametrize("argv", [["nc", "-l", "4444"], ["base64", "-d", "x"], ["xclip", "-o"],
+                                  ["tar", "czf", "a.tgz", "."], ["dd", "if=/dev/zero", "of=x"],
+                                  ["sysctl", "-w", "vm.swappiness=10"],
+                                  ["npx", "prisma", "migrate", "deploy"],
+                                  ["python", "-c", "print(1)"], ["node", "-e", "1"]])
+def test_dual_use_commands_stay_unknown_on_purpose(argv):
+    assert match_command(argv)["id"] == "unknown"

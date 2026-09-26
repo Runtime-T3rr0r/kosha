@@ -724,6 +724,25 @@
   read_only: false
   note: "opaque local script; flat fallback, contents not scanned"
 
+# --- resource hijacking ---
+# Only the unambiguous cases. nc, base64, xclip, tar, dd, sysctl, prisma migrate,
+# python -c, node -e are deliberately not classified: argv alone can't distinguish
+# benign use from misuse, so they stay unknown.
+- id: crypto_miner
+  match: {family: hijack, sub: miner, flags_any: []}
+  reversible: false
+  scope: external
+  privilege: false
+  read_only: false
+  note: "xmrig, any invocation: burns compute and connects to an external mining pool"
+- id: stress_load
+  match: {family: hijack, sub: stress, flags_any: []}
+  reversible: false
+  scope: shared
+  privilege: false
+  read_only: false
+  note: "stress / stress-ng: saturates CPU/memory/IO that other processes and agents on the host also draw on, so shared, not local"
+
 # --- deploy ---
 - id: deploy_trigger
   match: {family: deploy, sub: null, flags_any: []}

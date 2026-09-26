@@ -288,6 +288,10 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "read_util", cmd
     if cmd in LINTERS:
         return "lint", cmd
+    if cmd == "xmrig":
+        return "hijack", "miner"
+    if cmd in {"stress", "stress-ng"}:
+        return "hijack", "stress"
     if (cmd == "playwright" and first == "test") or (cmd == "cypress" and first == "run"):
         return "test", "e2e"
     if cmd == "xargs":

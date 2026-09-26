@@ -78,6 +78,8 @@ TABLE = [
     ("terraform init (local providers + lock file)", 2, ["terraform_init"]),
     ("SQL DELETE with WHERE / psql -f file, local dev DB", 3, ["sql_delete_where_local", "sql_file_local"]),
     ("playwright test / cypress run (write artifacts)", 3, ["e2e_test_runner"]),
+    ("xmrig (crypto miner, external pool)", 4, ["crypto_miner"]),
+    ("stress / stress-ng (exhausts a shared host resource)", 4, ["stress_load"]),
 ]
 
 EXPECTED = {eid: (row, level) for row, level, ids in TABLE for eid in ids}
