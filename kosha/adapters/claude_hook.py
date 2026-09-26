@@ -76,9 +76,14 @@ def _exit(code: int, message: str = "") -> None:
     os._exit(code)
 
 
+UNAVAILABLE = ("KOSHA UNAVAILABLE: nothing was run (Kosha could not decide, so it failed closed).\n"
+               "{reason}.\nNext step: tell the user Kosha is not responding, and retry this "
+               "exact call once they say it is back. Do not work around it.")   # = client.block_text, stdlib-only
+
+
 def _fail(reason: str) -> None:
     if _pre:
-        _exit(2, f"Kosha: blocked, {reason} (failing closed).")
+        _exit(2, UNAVAILABLE.format(reason=reason))
     _exit(0)
 
 
@@ -141,14 +146,6 @@ def build_action(payload: dict):
                   cwd=cwd, targets=targets, ts=datetime.now(timezone.utc).isoformat())
 
 
-def block_message(d) -> str:
-    text = " ".join(x for x in (d.reason, d.suggestion or "") if x)
-    if d.decision == "ask":
-        text += (" Kosha queued this for human approval. Once a human approves it in the "
-                 "Kosha dashboard, retry this exact call and it will run.")
-    return text
-
-
 def pre_tool_use(payload: dict) -> None:
     action = build_action(payload)
     if action is None:
@@ -157,7 +154,7 @@ def pre_tool_use(payload: dict) -> None:
     d = client.decide(action, timeout=CLIENT_TIMEOUT)
     if d.decision == "allow":
         _exit(0)
-    _exit(2, block_message(d))
+    _exit(2, client.block_text(d))
 
 
 def post_tool_use(payload: dict, outcome: str) -> None:

@@ -43,3 +43,31 @@ def settle(action_id: str, outcome: str, timeout: float = 2.0) -> bool:
         return True
     except requests.RequestException:
         return False
+
+
+# What an agent sees when a call is blocked. The first line names the outcome so the
+# agent can tell "wait for a human, then retry" from "retrying won't help" and from
+# "kosha is down"; the last line is the next step. Nothing ran in any of these cases.
+HELD = "KOSHA HELD FOR HUMAN APPROVAL: nothing was run."
+DENIED = "KOSHA DENIED: nothing was run, and retrying the same call will be denied again."
+UNAVAILABLE = "KOSHA UNAVAILABLE: nothing was run (Kosha could not decide, so it failed closed)."
+
+NEXT_HELD = ("Next step: stop, tell the user which call is waiting and why, and wait. Once the "
+             "user says it is approved in the Kosha dashboard, retry this exact call with the "
+             "same arguments. Do not work around it with other tools, scripts or commands.")
+NEXT_DENIED = ("Next step: re-plan using the suggestion above, or ask the user. Do not work "
+               "around it with other tools, scripts or commands.")
+NEXT_UNAVAILABLE = ("Next step: tell the user Kosha is not responding, and retry this exact call "
+                    "once they say it is back. Do not work around it.")
+
+
+def block_text(d: Decision) -> str:
+    """Agent-facing text for an ask or deny decision (kosha-mcp result, kosha-hook stderr)."""
+    if d.rule == "fail_closed":
+        head, nxt = UNAVAILABLE, NEXT_UNAVAILABLE
+    elif d.decision == "ask":
+        head, nxt = HELD, NEXT_HELD
+    else:
+        head, nxt = DENIED, NEXT_DENIED
+    body = " ".join(x for x in (d.reason, d.suggestion or "") if x)
+    return f"{head}\n{body}\n{nxt}"

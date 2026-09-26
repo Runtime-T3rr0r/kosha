@@ -243,3 +243,10 @@ def test_mcp_protocol_meta_reaches_identity_in_inline_mode(live_koshad, ws, monk
     res = asyncio.run(go())
     assert not res.is_error
     assert last_action(live_koshad)["agent_id"] == "from-meta"
+
+
+def test_every_tool_description_carries_the_gating_rules():
+    # Bob ignores MCP server `instructions`; tool descriptions are what the model sees
+    for t in bob_mcp.TOOLS:
+        assert "KOSHA HELD FOR HUMAN APPROVAL" in t.description and "retry this exact call" in t.description
+        assert "KOSHA DENIED" in t.description, t.name

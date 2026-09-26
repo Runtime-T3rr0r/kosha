@@ -44,6 +44,15 @@ def resolve_agent_id(raw_request: dict, server_instance_name: str) -> str:
     return server_instance_name  # one kosha-mcp instance per Bob custom mode
 
 
+# Bob never forwards an MCP server's `instructions` to the model (its MCP client stores
+# them, nothing reads them), so the gating rules ride on every tool description, the
+# one channel Bob always shows. The mode's roleDefinition repeats them in full.
+GATING = (" Gated by Kosha: every call is priced against a budget shared by the whole agent "
+          "fleet. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
+          "the user and, once they say it is approved, retry this exact call. KOSHA DENIED means "
+          "retrying will not help: re-plan. Never work around a block with other tools.")
+
+
 def _schema(props: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": {k: {"type": "string", "description": d}
                                              for k, d in props.items()},
@@ -52,23 +61,23 @@ def _schema(props: dict, required: list[str]) -> dict:
 
 TOOLS = [
     types.Tool(name="run_command", description="Run a shell command in the workspace. "
-               "Use this for every command; it is priced and may need human approval.",
+               "Use this for every command; it is priced and may need human approval." + GATING,
                input_schema=_schema({"command": "Shell command line",
                                      "cwd": "Working directory, relative to the workspace"},
                                     ["command"])),
-    types.Tool(name="edit_file", description="Replace one exact occurrence of `old` with `new` in a file.",
+    types.Tool(name="edit_file", description="Replace one exact occurrence of `old` with `new` in a file." + GATING,
                input_schema=_schema({"path": "File path, relative to the workspace",
                                      "old": "Exact text to replace (must occur exactly once)",
                                      "new": "Replacement text"}, ["path", "old", "new"])),
-    types.Tool(name="write_file", description="Create or overwrite a file with `content`.",
+    types.Tool(name="write_file", description="Create or overwrite a file with `content`." + GATING,
                input_schema=_schema({"path": "File path, relative to the workspace",
                                      "content": "Full file content"}, ["path", "content"])),
-    types.Tool(name="git", description="Run a git command, e.g. args='push origin main'.",
+    types.Tool(name="git", description="Run a git command, e.g. args='push origin main'." + GATING,
                input_schema=_schema({"args": "Arguments after `git`"}, ["args"])),
-    types.Tool(name="db_exec", description="Run SQL against a configured database alias (e.g. dev, prod).",
+    types.Tool(name="db_exec", description="Run SQL against a configured database alias (e.g. dev, prod)." + GATING,
                input_schema=_schema({"db": "Database alias from config/kosha.yaml",
                                      "sql": "SQL to run"}, ["db", "sql"])),
-    types.Tool(name="deploy", description="Deploy the workspace to a target environment.",
+    types.Tool(name="deploy", description="Deploy the workspace to a target environment." + GATING,
                input_schema=_schema({"target": "Environment name, e.g. staging or prod"}, ["target"])),
 ]
 TOOL_NAMES = {t.name for t in TOOLS}
@@ -136,12 +145,8 @@ class Gateway:
         args = raw_request.get("arguments") or {}
         action = self.build_action(name, args, resolve_agent_id(raw_request, self.agent))
         d = client.decide(action)
-        if d.decision == "deny":
-            return True, _explain(d, "")
-        if d.decision == "ask":
-            return True, _explain(d, " Kosha queued this for human approval. After a human "
-                                     "approves it in the Kosha dashboard, retry this exact call "
-                                     "with the same arguments and it will run.")
+        if d.decision != "allow":
+            return True, client.block_text(d)
         try:
             ok, out = self.execute(action)
         except Exception as e:
@@ -155,10 +160,6 @@ def _split(s: str) -> list[str]:
         return shlex.split(s)
     except ValueError:
         return s.split()
-
-
-def _explain(d, extra: str) -> str:
-    return " ".join(x for x in (d.reason, d.suggestion or "") if x) + extra
 
 
 def _clip(s: str) -> str:
@@ -222,8 +223,7 @@ def build_server(gw: Gateway) -> Server:
 
     return Server(f"kosha-mcp-{gw.agent}", version="0.0.1",
                   instructions="Use these tools for every command, file edit, git, database "
-                               "and deploy step. Each call is priced against a shared fleet "
-                               "budget; a denied or held call explains why and what is allowed.",
+                               "and deploy step." + GATING,   # for MCP clients that read it; Bob doesn't
                   on_list_tools=list_tools, on_call_tool=call_tool)
 
 
