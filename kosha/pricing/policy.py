@@ -57,8 +57,11 @@ class LedgerState:
     will supply. Exists so policy can be tested in isolation; the real source must
     provide this same shape.
 
-    recent_actions: (agent_id, level) for actions already reserved/confirmed in the
-    current window, excluding the action being decided.
+    recent_actions: (agent_id, level) or (agent_id, level, batch) for actions already
+    reserved/confirmed in the current window, excluding the action being decided.
+    batch (batch_of(action)) groups actions that are one unit of work, e.g. the file
+    writes of one commit; the escalation rule counts a batch once. An entry without a
+    batch, or with batch None, is its own batch.
     window_touches: typed targets (convergence.touch) of the window's actions that were
     decided allow OR ask, pending ones included, in decision order, excluding the action
     being decided. An asked action counts as soon as it is asked, not once approved or
@@ -69,7 +72,7 @@ class LedgerState:
     fleet_budget: float
     agent_spent: float     # spend of the agent making this action
     agent_cap: float
-    recent_actions: list[tuple[str, int]] = field(default_factory=list)
+    recent_actions: list[tuple] = field(default_factory=list)
     window_touches: list[Touch] = field(default_factory=list)
 
 
@@ -162,7 +165,25 @@ def _hard_deny_reason(action: Action) -> Optional[str]:
 
 # --- fleet escalation ---
 
-def escalation_threshold(recent_actions: list[tuple[str, int]], agent_id: Optional[str] = None) -> int:
+def batch_of(action: Action) -> Optional[str]:
+    """Batch key the ledger records with an action (third element of a recent_actions
+    entry). Action has no batch field yet, so this reads an optional batch_id
+    attribute; None (every live action today) means the action is its own batch."""
+    return getattr(action, "batch_id", None)
+
+
+def _consequential_batches(recent_actions: list[tuple], threshold: int) -> int:
+    """Distinct batches with at least one action at or above threshold. Entries
+    without a batch key count one each."""
+    keys = set()
+    for i, entry in enumerate(recent_actions):
+        if entry[1] >= threshold:
+            batch = entry[2] if len(entry) > 2 else None
+            keys.add(("batch", entry[0], batch) if batch is not None else ("solo", i))
+    return len(keys)
+
+
+def escalation_threshold(recent_actions: list[tuple], agent_id: Optional[str] = None) -> int:
     """Level at which an action counts as consequential, by fleet size in the window.
 
     agent_id is the agent making the action being decided; it counts toward the
@@ -176,12 +197,15 @@ def escalation_threshold(recent_actions: list[tuple[str, int]], agent_id: Option
     consequential actions spread across several agents are the cross-agent signal
     the rule exists for, and keep the L3+ threshold.
     """
-    agents = {a for a, _ in recent_actions} | ({agent_id} if agent_id is not None else set())
+    agents = {e[0] for e in recent_actions} | ({agent_id} if agent_id is not None else set())
     return CONSEQUENTIAL if len(agents) >= 2 else SINGLE_AGENT_CONSEQUENTIAL
 
 
-def escalation_triggered(recent_actions: list[tuple[str, int]], agent_id: Optional[str] = None) -> bool:
-    """Two-plus consequential actions in the window, at escalation_threshold().
+def escalation_triggered(recent_actions: list[tuple], agent_id: Optional[str] = None) -> bool:
+    """Two-plus consequential actions in the window, at escalation_threshold(), counted
+    by batch: one batch (e.g. one commit writing many new files) counts once however
+    many of its actions are consequential, so a single large commit can't trigger the
+    rule on its own. Separate batches, even one action each, count separately.
 
     No distinctness requirement on the triggering actions themselves: one agent
     repeating consequential actions counts the same as several agents each doing one.
@@ -195,10 +219,10 @@ def escalation_triggered(recent_actions: list[tuple[str, int]], agent_id: Option
     trigger: they are a subset of this condition, not a separate one.
     """
     threshold = escalation_threshold(recent_actions, agent_id)
-    return sum(1 for _, lvl in recent_actions if lvl >= threshold) >= 2
+    return _consequential_batches(recent_actions, threshold) >= 2
 
 
-def escalation_asks(recent_actions: list[tuple[str, int]], agent_id: str, level: int) -> bool:
+def escalation_asks(recent_actions: list[tuple], agent_id: str, level: int) -> bool:
     """Whether this action (agent_id, level) is stopped by the escalation rule: it is
     itself consequential at the window's threshold and the window already triggered."""
     return (level >= escalation_threshold(recent_actions, agent_id)
@@ -259,7 +283,7 @@ def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> 
 
     if escalation_asks(s.recent_actions, action.agent_id, level):
         threshold = escalation_threshold(s.recent_actions, action.agent_id)
-        prior = ", ".join(f"{a} L{l}" for a, l in s.recent_actions if l >= threshold)
+        prior = ", ".join(f"{e[0]} L{e[1]}" for e in s.recent_actions if e[1] >= threshold)
         return out("ask", "escalation",
                    f"Kosha: fleet escalation. Two-plus consequential actions this "
                    f"window ({prior}); this {name} action needs human approval.",

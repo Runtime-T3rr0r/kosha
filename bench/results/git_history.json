@@ -1,0 +1,1033 @@
+{
+  "bench": "D git_history",
+  "caveat": "rogue-ish = reverted or fix-referenced by sha within 7 days: a cheap SZZ proxy, not a validated bug-inducing-commit label. edit_file actions only; no shell commands reconstructed.",
+  "window_minutes": 30,
+  "min_authors": 3,
+  "lookahead_days": 7,
+  "levels": {
+    "tracked (M/T/D)": [
+      2,
+      "rev|local|nopriv",
+      2.0
+    ],
+    "new (A)": [
+      3,
+      "irrev|local|nopriv",
+      10.0
+    ]
+  },
+  "perms": 5000,
+  "seed": 20260926,
+  "repos": {
+    "llvm-project": {
+      "url": "https://github.com/llvm/llvm-project.git",
+      "head": "207f7f00ced9adf54e79f2bbf2c59a485a608495",
+      "analysed_from": "2026-09-05",
+      "analysed_until": "2026-09-19T16:58+00:00",
+      "analysed_commits": 2169,
+      "analysed_rogue": 35,
+      "analysed_fixers": 40,
+      "authors": 571,
+      "label_links_all_history": {
+        "revert": 206,
+        "fix_ref": 50
+      },
+      "dropped": {
+        "no_files": 20,
+        "bot": 100,
+        "shallow_boundary": 1
+      }
+    },
+    "cpython": {
+      "url": "https://github.com/python/cpython.git",
+      "head": "109a192eb5c4b3ac3ed4c029b9032215bd079c6e",
+      "analysed_from": "2026-07-08",
+      "analysed_until": "2026-09-19T16:49+00:00",
+      "analysed_commits": 1037,
+      "analysed_rogue": 2,
+      "analysed_fixers": 2,
+      "authors": 254,
+      "label_links_all_history": {
+        "revert": 2
+      },
+      "dropped": {
+        "shallow_boundary": 1
+      }
+    },
+    "vscode": {
+      "url": "https://github.com/microsoft/vscode.git",
+      "head": "a460613c57b4c1eb2bc8edc97be694e05ae286b2",
+      "analysed_from": "2026-08-22",
+      "analysed_until": "2026-09-19T16:58+00:00",
+      "analysed_commits": 1615,
+      "analysed_rogue": 8,
+      "analysed_fixers": 8,
+      "authors": 110,
+      "label_links_all_history": {
+        "revert": 27,
+        "fix_ref": 1
+      },
+      "dropped": {
+        "no_files": 24,
+        "bot": 162,
+        "shallow_boundary": 8
+      }
+    }
+  },
+  "fixers_kept": {
+    "qualifying_windows": 537,
+    "commits_in_windows": 2620,
+    "rogue_in_windows": 34,
+    "per_repo": {
+      "llvm-project": {
+        "windows": 328,
+        "commits": 1761,
+        "rogue": 28
+      },
+      "cpython": {
+        "windows": 25,
+        "commits": 88,
+        "rogue": 1
+      },
+      "vscode": {
+        "windows": 184,
+        "commits": 771,
+        "rogue": 5
+      }
+    },
+    "window_convergence": {
+      "with_rogue": {
+        "k": 3,
+        "n": 31,
+        "rate": 0.0968,
+        "mean_shared_files": 0.097,
+        "mean_commits": 6.32
+      },
+      "without_rogue": {
+        "k": 49,
+        "n": 506,
+        "rate": 0.0968,
+        "mean_shared_files": 0.164,
+        "mean_commits": 4.79
+      },
+      "fisher_p_unstratified": 1.0,
+      "perm_stratified": {
+        "observed": -0.0001,
+        "null_mean": -0.0185,
+        "p_two_sided": 0.7021
+      }
+    },
+    "commit_level": {
+      "crosses": {
+        "rogue": {
+          "k": 1,
+          "n": 34,
+          "rate": 0.0294,
+          "ci95": [
+            0.0007,
+            0.1533
+          ]
+        },
+        "clean": {
+          "k": 116,
+          "n": 2586,
+          "rate": 0.0449,
+          "ci95": [
+            0.0372,
+            0.0536
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.1471,
+        "perm_stratified": {
+          "observed": -0.0154,
+          "null_mean": -0.0183,
+          "p_two_sided": 1.0
+        }
+      },
+      "crosses_prior": {
+        "rogue": {
+          "k": 1,
+          "n": 34,
+          "rate": 0.0294,
+          "ci95": [
+            0.0007,
+            0.1533
+          ]
+        },
+        "clean": {
+          "k": 58,
+          "n": 2586,
+          "rate": 0.0224,
+          "ci95": [
+            0.0171,
+            0.0289
+          ]
+        },
+        "fisher_p": 0.5413,
+        "min_detectable_rogue_rate": 0.0882,
+        "perm_stratified": {
+          "observed": 0.007,
+          "null_mean": -0.0092,
+          "p_two_sided": 0.3733
+        }
+      },
+      "crosses_sliding": {
+        "rogue": {
+          "k": 1,
+          "n": 34,
+          "rate": 0.0294,
+          "ci95": [
+            0.0007,
+            0.1533
+          ]
+        },
+        "clean": {
+          "k": 82,
+          "n": 2586,
+          "rate": 0.0317,
+          "ci95": [
+            0.0253,
+            0.0392
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.1176,
+        "perm_stratified": {
+          "observed": -0.0023,
+          "null_mean": -0.0102,
+          "p_two_sided": 1.0
+        }
+      },
+      "crosses_sliding_10m": {
+        "rogue": {
+          "k": 1,
+          "n": 34,
+          "rate": 0.0294,
+          "ci95": [
+            0.0007,
+            0.1533
+          ]
+        },
+        "clean": {
+          "k": 39,
+          "n": 2586,
+          "rate": 0.0151,
+          "ci95": [
+            0.0107,
+            0.0206
+          ]
+        },
+        "fisher_p": 0.4093,
+        "min_detectable_rogue_rate": 0.0882,
+        "perm_stratified": {
+          "observed": 0.0143,
+          "null_mean": -0.0082,
+          "p_two_sided": 0.2192
+        }
+      },
+      "crosses_sliding_5m": {
+        "rogue": {
+          "k": 1,
+          "n": 34,
+          "rate": 0.0294,
+          "ci95": [
+            0.0007,
+            0.1533
+          ]
+        },
+        "clean": {
+          "k": 16,
+          "n": 2586,
+          "rate": 0.0062,
+          "ci95": [
+            0.0035,
+            0.01
+          ]
+        },
+        "fisher_p": 0.1997,
+        "min_detectable_rogue_rate": 0.0588,
+        "perm_stratified": {
+          "observed": 0.0232,
+          "null_mean": -0.0032,
+          "p_two_sided": 0.1076
+        }
+      },
+      "flag_bucket": {
+        "rogue": {
+          "k": 6,
+          "n": 34,
+          "rate": 0.1765,
+          "ci95": [
+            0.0676,
+            0.3453
+          ]
+        },
+        "clean": {
+          "k": 202,
+          "n": 2586,
+          "rate": 0.0781,
+          "ci95": [
+            0.0681,
+            0.0891
+          ]
+        },
+        "fisher_p": 0.0479,
+        "min_detectable_rogue_rate": 0.1765,
+        "perm_stratified": {
+          "observed": 0.0984,
+          "null_mean": 0.0496,
+          "p_two_sided": 0.4101
+        }
+      },
+      "flag_real": {
+        "rogue": {
+          "k": 6,
+          "n": 34,
+          "rate": 0.1765,
+          "ci95": [
+            0.0676,
+            0.3453
+          ]
+        },
+        "clean": {
+          "k": 211,
+          "n": 2586,
+          "rate": 0.0816,
+          "ci95": [
+            0.0713,
+            0.0928
+          ]
+        },
+        "fisher_p": 0.057,
+        "min_detectable_rogue_rate": 0.2059,
+        "perm_stratified": {
+          "observed": 0.0949,
+          "null_mean": 0.0538,
+          "p_two_sided": 0.5909
+        }
+      }
+    },
+    "commit_level_by_repo": {
+      "llvm-project": {
+        "crosses": {
+          "rogue": {
+            "k": 1,
+            "n": 28,
+            "rate": 0.0357,
+            "ci95": [
+              0.0009,
+              0.1835
+            ]
+          },
+          "clean": {
+            "k": 30,
+            "n": 1733,
+            "rate": 0.0173,
+            "ci95": [
+              0.0117,
+              0.0246
+            ]
+          },
+          "fisher_p": 0.3942,
+          "min_detectable_rogue_rate": 0.1071
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 6,
+            "n": 28,
+            "rate": 0.2143,
+            "ci95": [
+              0.083,
+              0.4095
+            ]
+          },
+          "clean": {
+            "k": 164,
+            "n": 1733,
+            "rate": 0.0946,
+            "ci95": [
+              0.0813,
+              0.1094
+            ]
+          },
+          "fisher_p": 0.0462,
+          "min_detectable_rogue_rate": 0.2143
+        }
+      },
+      "cpython": {
+        "crosses": {
+          "rogue": {
+            "k": 0,
+            "n": 1,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.975
+            ]
+          },
+          "clean": {
+            "k": 4,
+            "n": 87,
+            "rate": 0.046,
+            "ci95": [
+              0.0127,
+              0.1136
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": null
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 0,
+            "n": 1,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.975
+            ]
+          },
+          "clean": {
+            "k": 5,
+            "n": 87,
+            "rate": 0.0575,
+            "ci95": [
+              0.0189,
+              0.129
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": null
+        }
+      },
+      "vscode": {
+        "crosses": {
+          "rogue": {
+            "k": 0,
+            "n": 5,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.5218
+            ]
+          },
+          "clean": {
+            "k": 82,
+            "n": 766,
+            "rate": 0.107,
+            "ci95": [
+              0.086,
+              0.1311
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": 0.6
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 0,
+            "n": 5,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.5218
+            ]
+          },
+          "clean": {
+            "k": 33,
+            "n": 766,
+            "rate": 0.0431,
+            "ci95": [
+              0.0298,
+              0.06
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": 0.4
+        }
+      }
+    },
+    "stream": {
+      "commits": 4821,
+      "rogue": 45,
+      "crosses_sliding": {
+        "rogue": {
+          "k": 1,
+          "n": 45,
+          "rate": 0.0222,
+          "ci95": [
+            0.0006,
+            0.1177
+          ]
+        },
+        "clean": {
+          "k": 114,
+          "n": 4776,
+          "rate": 0.0239,
+          "ci95": [
+            0.0197,
+            0.0286
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.0889,
+        "perm_stratified": {
+          "observed": -0.0016,
+          "null_mean": -0.0042,
+          "p_two_sided": 1.0
+        }
+      },
+      "flag_real": {
+        "rogue": {
+          "k": 6,
+          "n": 45,
+          "rate": 0.1333,
+          "ci95": [
+            0.0505,
+            0.2679
+          ]
+        },
+        "clean": {
+          "k": 261,
+          "n": 4776,
+          "rate": 0.0546,
+          "ci95": [
+            0.0484,
+            0.0615
+          ]
+        },
+        "fisher_p": 0.0361,
+        "min_detectable_rogue_rate": 0.1333,
+        "perm_stratified": {
+          "observed": 0.0787,
+          "null_mean": 0.0676,
+          "p_two_sided": 1.0
+        }
+      }
+    },
+    "timing": {
+      "bucket_vs_real_flags": {
+        "both": 156,
+        "bucket_only": 52,
+        "real_only": 61,
+        "neither": 2351
+      },
+      "crosses_prior_bucket_vs_sliding": {
+        "bucket=False/sliding=False": 2537,
+        "bucket=True/sliding=True": 59,
+        "bucket=False/sliding=True": 24
+      },
+      "gap_minutes_median": {
+        "rogue": 0.6,
+        "clean": 10.51,
+        "n_rogue": 1,
+        "n_clean": 82
+      },
+      "gap_mannwhitney": {
+        "auc_rogue_gt_clean": 0.0854,
+        "p_two_sided": 0.1854
+      }
+    },
+    "flag_rules": {
+      "bucket": {
+        "escalation": 605,
+        "agent_cap": 1776
+      },
+      "real": {
+        "escalation": 587,
+        "agent_cap": 1846
+      }
+    },
+    "flagged_by_new_files": {
+      "has_new": {
+        "k": 206,
+        "n": 733,
+        "rate": 0.281
+      },
+      "edits_only": {
+        "k": 2,
+        "n": 1887,
+        "rate": 0.0011
+      }
+    }
+  },
+  "fixers_removed": {
+    "qualifying_windows": 531,
+    "commits_in_windows": 2575,
+    "rogue_in_windows": 33,
+    "per_repo": {
+      "llvm-project": {
+        "windows": 323,
+        "commits": 1721,
+        "rogue": 27
+      },
+      "cpython": {
+        "windows": 25,
+        "commits": 88,
+        "rogue": 1
+      },
+      "vscode": {
+        "windows": 183,
+        "commits": 766,
+        "rogue": 5
+      }
+    },
+    "window_convergence": {
+      "with_rogue": {
+        "k": 3,
+        "n": 31,
+        "rate": 0.0968,
+        "mean_shared_files": 0.097,
+        "mean_commits": 6.19
+      },
+      "without_rogue": {
+        "k": 48,
+        "n": 500,
+        "rate": 0.096,
+        "mean_shared_files": 0.164,
+        "mean_commits": 4.77
+      },
+      "fisher_p_unstratified": 1.0,
+      "perm_stratified": {
+        "observed": 0.0008,
+        "null_mean": -0.0201,
+        "p_two_sided": 0.5479
+      }
+    },
+    "commit_level": {
+      "crosses": {
+        "rogue": {
+          "k": 1,
+          "n": 33,
+          "rate": 0.0303,
+          "ci95": [
+            0.0008,
+            0.1576
+          ]
+        },
+        "clean": {
+          "k": 113,
+          "n": 2542,
+          "rate": 0.0445,
+          "ci95": [
+            0.0368,
+            0.0532
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.1515,
+        "perm_stratified": {
+          "observed": -0.0142,
+          "null_mean": -0.0184,
+          "p_two_sided": 1.0
+        }
+      },
+      "crosses_prior": {
+        "rogue": {
+          "k": 1,
+          "n": 33,
+          "rate": 0.0303,
+          "ci95": [
+            0.0008,
+            0.1576
+          ]
+        },
+        "clean": {
+          "k": 56,
+          "n": 2542,
+          "rate": 0.022,
+          "ci95": [
+            0.0167,
+            0.0285
+          ]
+        },
+        "fisher_p": 0.5245,
+        "min_detectable_rogue_rate": 0.0909,
+        "perm_stratified": {
+          "observed": 0.0083,
+          "null_mean": -0.0093,
+          "p_two_sided": 0.3535
+        }
+      },
+      "crosses_sliding": {
+        "rogue": {
+          "k": 1,
+          "n": 33,
+          "rate": 0.0303,
+          "ci95": [
+            0.0008,
+            0.1576
+          ]
+        },
+        "clean": {
+          "k": 80,
+          "n": 2542,
+          "rate": 0.0315,
+          "ci95": [
+            0.025,
+            0.039
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.1212,
+        "perm_stratified": {
+          "observed": -0.0012,
+          "null_mean": -0.0107,
+          "p_two_sided": 1.0
+        }
+      },
+      "crosses_sliding_10m": {
+        "rogue": {
+          "k": 1,
+          "n": 33,
+          "rate": 0.0303,
+          "ci95": [
+            0.0008,
+            0.1576
+          ]
+        },
+        "clean": {
+          "k": 37,
+          "n": 2542,
+          "rate": 0.0146,
+          "ci95": [
+            0.0103,
+            0.02
+          ]
+        },
+        "fisher_p": 0.3896,
+        "min_detectable_rogue_rate": 0.0909,
+        "perm_stratified": {
+          "observed": 0.0157,
+          "null_mean": -0.0086,
+          "p_two_sided": 0.1876
+        }
+      },
+      "crosses_sliding_5m": {
+        "rogue": {
+          "k": 1,
+          "n": 33,
+          "rate": 0.0303,
+          "ci95": [
+            0.0008,
+            0.1576
+          ]
+        },
+        "clean": {
+          "k": 14,
+          "n": 2542,
+          "rate": 0.0055,
+          "ci95": [
+            0.003,
+            0.0092
+          ]
+        },
+        "fisher_p": 0.1763,
+        "min_detectable_rogue_rate": 0.0606,
+        "perm_stratified": {
+          "observed": 0.0248,
+          "null_mean": -0.0031,
+          "p_two_sided": 0.0876
+        }
+      },
+      "flag_bucket": {
+        "rogue": {
+          "k": 6,
+          "n": 33,
+          "rate": 0.1818,
+          "ci95": [
+            0.0698,
+            0.3546
+          ]
+        },
+        "clean": {
+          "k": 200,
+          "n": 2542,
+          "rate": 0.0787,
+          "ci95": [
+            0.0685,
+            0.0898
+          ]
+        },
+        "fisher_p": 0.0435,
+        "min_detectable_rogue_rate": 0.1818,
+        "perm_stratified": {
+          "observed": 0.1031,
+          "null_mean": 0.0476,
+          "p_two_sided": 0.3979
+        }
+      },
+      "flag_real": {
+        "rogue": {
+          "k": 6,
+          "n": 33,
+          "rate": 0.1818,
+          "ci95": [
+            0.0698,
+            0.3546
+          ]
+        },
+        "clean": {
+          "k": 210,
+          "n": 2542,
+          "rate": 0.0826,
+          "ci95": [
+            0.0722,
+            0.094
+          ]
+        },
+        "fisher_p": 0.0529,
+        "min_detectable_rogue_rate": 0.2121,
+        "perm_stratified": {
+          "observed": 0.0992,
+          "null_mean": 0.0521,
+          "p_two_sided": 0.4047
+        }
+      }
+    },
+    "commit_level_by_repo": {
+      "llvm-project": {
+        "crosses": {
+          "rogue": {
+            "k": 1,
+            "n": 27,
+            "rate": 0.037,
+            "ci95": [
+              0.0009,
+              0.1897
+            ]
+          },
+          "clean": {
+            "k": 27,
+            "n": 1694,
+            "rate": 0.0159,
+            "ci95": [
+              0.0105,
+              0.0231
+            ]
+          },
+          "fisher_p": 0.36,
+          "min_detectable_rogue_rate": 0.1111
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 6,
+            "n": 27,
+            "rate": 0.2222,
+            "ci95": [
+              0.0862,
+              0.4226
+            ]
+          },
+          "clean": {
+            "k": 162,
+            "n": 1694,
+            "rate": 0.0956,
+            "ci95": [
+              0.082,
+              0.1106
+            ]
+          },
+          "fisher_p": 0.0413,
+          "min_detectable_rogue_rate": 0.2222
+        }
+      },
+      "cpython": {
+        "crosses": {
+          "rogue": {
+            "k": 0,
+            "n": 1,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.975
+            ]
+          },
+          "clean": {
+            "k": 4,
+            "n": 87,
+            "rate": 0.046,
+            "ci95": [
+              0.0127,
+              0.1136
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": null
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 0,
+            "n": 1,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.975
+            ]
+          },
+          "clean": {
+            "k": 5,
+            "n": 87,
+            "rate": 0.0575,
+            "ci95": [
+              0.0189,
+              0.129
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": null
+        }
+      },
+      "vscode": {
+        "crosses": {
+          "rogue": {
+            "k": 0,
+            "n": 5,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.5218
+            ]
+          },
+          "clean": {
+            "k": 82,
+            "n": 761,
+            "rate": 0.1078,
+            "ci95": [
+              0.0866,
+              0.132
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": 0.6
+        },
+        "flag_bucket": {
+          "rogue": {
+            "k": 0,
+            "n": 5,
+            "rate": 0.0,
+            "ci95": [
+              0.0,
+              0.5218
+            ]
+          },
+          "clean": {
+            "k": 33,
+            "n": 761,
+            "rate": 0.0434,
+            "ci95": [
+              0.03,
+              0.0604
+            ]
+          },
+          "fisher_p": 1.0,
+          "min_detectable_rogue_rate": 0.4
+        }
+      }
+    },
+    "stream": {
+      "commits": 4771,
+      "rogue": 42,
+      "crosses_sliding": {
+        "rogue": {
+          "k": 1,
+          "n": 42,
+          "rate": 0.0238,
+          "ci95": [
+            0.0006,
+            0.1257
+          ]
+        },
+        "clean": {
+          "k": 112,
+          "n": 4729,
+          "rate": 0.0237,
+          "ci95": [
+            0.0195,
+            0.0284
+          ]
+        },
+        "fisher_p": 1.0,
+        "min_detectable_rogue_rate": 0.0952,
+        "perm_stratified": {
+          "observed": 0.0001,
+          "null_mean": -0.0044,
+          "p_two_sided": 1.0
+        }
+      },
+      "flag_real": {
+        "rogue": {
+          "k": 6,
+          "n": 42,
+          "rate": 0.1429,
+          "ci95": [
+            0.0543,
+            0.2854
+          ]
+        },
+        "clean": {
+          "k": 261,
+          "n": 4729,
+          "rate": 0.0552,
+          "ci95": [
+            0.0489,
+            0.0621
+          ]
+        },
+        "fisher_p": 0.0279,
+        "min_detectable_rogue_rate": 0.1429,
+        "perm_stratified": {
+          "observed": 0.0877,
+          "null_mean": 0.0649,
+          "p_two_sided": 0.7922
+        }
+      }
+    },
+    "timing": {
+      "bucket_vs_real_flags": {
+        "both": 156,
+        "bucket_only": 50,
+        "real_only": 60,
+        "neither": 2309
+      },
+      "crosses_prior_bucket_vs_sliding": {
+        "bucket=False/sliding=False": 2494,
+        "bucket=True/sliding=True": 57,
+        "bucket=False/sliding=True": 24
+      },
+      "gap_minutes_median": {
+        "rogue": 0.6,
+        "clean": 11.33,
+        "n_rogue": 1,
+        "n_clean": 80
+      },
+      "gap_mannwhitney": {
+        "auc_rogue_gt_clean": 0.0875,
+        "p_two_sided": 0.1966
+      }
+    },
+    "flag_rules": {
+      "bucket": {
+        "escalation": 603,
+        "agent_cap": 1776
+      },
+      "real": {
+        "escalation": 586,
+        "agent_cap": 1846
+      }
+    },
+    "flagged_by_new_files": {
+      "has_new": {
+        "k": 204,
+        "n": 725,
+        "rate": 0.2814
+      },
+      "edits_only": {
+        "k": 2,
+        "n": 1850,
+        "rate": 0.0011
+      }
+    }
+  }
+}
