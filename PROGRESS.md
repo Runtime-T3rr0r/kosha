@@ -64,7 +64,7 @@ Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js
 - **JSON output:** only `permissionDecision: "deny"` blocks. **`"ask"` is treated the same as `"allow"`**: Bob hooks have no ask. So kosha's `ask` must be sent to Bob as a deny whose reason says a human needs to approve it in kosha.
 - **Default hook timeout is 10s** (the `timeout` field is in seconds), and a timeout fails open. kosha-hook's own 2s SIGALRM stays well under it.
 - **PostToolUse fires only when the tool did *not* error**, and its payload adds `tool_response`. A failed native tool never settles through the hook, so its reservation stays charged. That's the conservative side, but worth knowing.
-- **Default approval block:** `approval.allowedExecutors = [{toolId: "execute_command", approvedCommands: [...read-only prefixes], deniedCommands: []}]`. Denied wins over approved, and it's matched per sub-command.
+- **Default approval block:** `approval.allowedExecutors = [{toolId: "execute_command", approvedCommands: [...read-only prefixes], deniedCommands: []}]`. ~~Denied wins over approved~~ **Corrected in task 8:** the longest token-prefix wins, and **a tie goes to allow** (`ZVt`). It's matched per sub-command.
 
 ## 2026-09-26: task 6 done (kosha-mcp)
 
@@ -225,5 +225,40 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 
 **What this does NOT show:** Bob's source also has an execution-time check (`N2r`: "Tool X is not allowed to be executed. Swap to a mode that can use mcp tools."). An out-of-list call can't be issued from chat, so that check was not exercised live. It's present in source and not verified live.
 
-## Next (task 8 onward), not started
-kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
+## 2026-09-26: task 8 done (kosha-hook for Bob)
+
+- **The same `kosha-hook` now serves both harnesses** (`kosha/adapters/claude_hook.py`). The harness is told apart by tool name.
+  - Bob native tools (verified in Bob's source): `execute_command` (`command`, workspace-relative `cwd`) → `run_command`; `write_file` → `write_file`; `apply_diff`, `insert_content`, `search_and_replace`, `office_edit` (all `path`, workspace-relative) → `edit_file`. Paths are resolved against the payload's `cwd`.
+  - Bob read-only tools and **kosha-mcp's own tools (`mcp__kosha*`) pass through**; the latter are already priced by kosha-mcp. Other MCP tools are priced as `other`.
+- **Design choice: native Bob calls are priced through koshad, not blanket-denied.** That's the PDF's "reused near-unchanged". Blanket-denying would brick every non-kosha Bob mode wherever the hook is installed.
+  - **Limitation:** Bob's hook payload has no agent identity, so every native call is charged to one pooled agent, **`bob-native`**. Fleet budget and escalation see these calls; per-agent caps can't separate them. For per-agent identity, agents must use the kosha-mcp tools (layer 1 removes the native ones).
+  - Bob fires PostToolUse only on success, so a failed native call is never refunded (the conservative side).
+- **Register for Bob** in `<workspace>/.bob/settings.json` (trusted workspace), with the same `hooks` block shape as Claude Code, PreToolUse and PostToolUse only. Use the **anchored** matcher `^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$`, the absolute path to the venv's `kosha-hook`, and `timeout: 10`. The demo copy goes into task 10.
+- **Tests:** `tests/test_bob_hook.py` (30), plus helper `tests/bob_runtime.py`.
+  - Mapping for all six native tools, workspace-relative `cwd`, pass-through, PostToolUse confirm.
+  - **End to end through Bob's real hook runner** (`Tb` and friends), extracted from the local Bob install **at test time into a temp dir, never committed**, since Bob is proprietary. These tests skip if Bob or node is missing. Under Bob's own runner:
+    - allow passes
+    - hard deny, and ask, block with kosha's reason
+    - koshad down blocks
+    - a hang inside the hook blocks via our alarm, well before Bob's 10s
+    - `RuntimeError`, `SystemExit(1)` and `KeyboardInterrupt` crashes block
+    - a 5MB reason still blocks (it's truncated below Bob's 1MB fail-open limit)
+    - the anchored matcher leaves kosha-mcp tools alone
+    - PostToolUse settles
+    - a misregistered interpreter path fails open (exit 127): **documented, not fixable from inside the hook**
+  - **Mutation-checked:** making the hook's failure path exit 1 instead of 2 fails the four hang/crash tests under Bob's runner.
+  - Full suite: 543 passed.
+- **Layer 4, `deniedCommands`, tested against Bob's real matcher (`HZ`/`ZVt`):** it blocks the literal prefix (`rm -rf build` with `rm -rf` denied; `git push --force` wins over an approved `git push`). **Asserted gaps**, each of which gets past a denied `rm -rf`:
+  - `python3 cleanup.py`
+  - `bash -c 'rm -rf build'`
+  - `rm -fr build`
+  - `rm -r -f build`
+  - `/bin/rm -rf build`
+  - `sudo rm -rf build`
+  - an approved entry as long as the denied one (a tie goes to allow)
+
+  Caveat: this exercises the matcher on single commands. Bob splits compound commands first (tree-sitter), and that splitting wasn't exercised, so whether it looks inside `bash -c` strings is unknown.
+- **Not done:** I haven't written `deniedCommands` into `~/.bob/settings/settings.json`. It's global and would change all Bob usage on this machine, so it goes with the demo config in task 10 unless you want it now.
+
+## Next (task 9 onward), not started
+fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
