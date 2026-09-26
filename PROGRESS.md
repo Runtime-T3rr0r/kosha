@@ -302,5 +302,51 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 - The hard-deny suggestion tells agents to "attach an approval token from a human", which invites exactly this.
 - `delete from users where ...` on prod is allowed without asking (`destructive_sql` covers only deletes without a WHERE). That may be intended, but it's worth a deliberate decision.
 
-## Next (task 9 onward), not started
-fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
+## 2026-09-27: task 9 done (fs_guard). Stop-and-report checkpoint
+
+**Status of other items at this checkpoint:**
+- **Raw redaction: NOT done.** Proposed, not started; the token and fingerprint work took priority. Open tension: approvers must see the content, since hiding it was one of the gaps just closed. A workable split is to mask token-like values everywhere but hash file bodies only in `events` and `actions.raw`, never in the approval bundle. Awaiting a decision.
+- **Approval-token bypass in `policy.py`:** the teammate is fixing it. **Not closed.** Before logging it closed: pull their diff, confirm the exemption is removed (not just harder to trigger), and personally re-run the `approval_token: "i-made-this-up"` + `drop database app` on prod reproduction and see it deny.
+
+**`kosha/system/fs_guard.py`** (layer 3, the backup lock):
+- **What it does:** a watchdog/inotify watcher on a working tree, handling created, modified, deleted and moved events. A change covered by an unexpired `expected_writes` lease is accepted and becomes the new restore point. Anything else is undone and logged as `bypass_detected` (`{event, path, outcome, root}`):
+  - modified/deleted known file → **restored to its last accepted content**
+  - new file → **quarantined** to `.kosha_quarantine/<timestamp>/<path>`
+  - move → the source is restored, the destination restored if it was known, else quarantined
+  - a move out of the tree arrives as a delayed delete and is restored
+- **Deviation from spec: restore last accepted content, not `git checkout --`.** Agents make approved, uncommitted edits through kosha-mcp, and resetting to HEAD would wipe those along with the bypass. For a clean tracked file the result is identical. `git checkout --` remains the fallback for files over 5MB (not snapshotted).
+- **Ignored:** `.git`, `.kosha_quarantine`, `.bob`, `.venv`, `__pycache__`, `node_modules`, sqlite files (`db_exec` leases nothing; the DB is kosha's to price, not fs_guard's to revert), editor swap files, symlinks.
+- **No undo loop:** its own restores are recognised by content, one bypass gives one event (tested). A guard exception is logged as `fs_guard_error` instead of dying silently.
+- **Hosted by koshad** when `KOSHA_GUARD_ROOT` is set (optional `KOSHA_GUARD_SESSION` tags the events); it starts and stops with koshad. Standalone: `python -m kosha.system.fs_guard <root> [--session S]`.
+
+**Known windows. Named, tested and documented; not closed:**
+1. **Settle grace (0.5s, was 2s).** A bypass write to a leased path within 0.5s after its gated action settles is accepted. The end-to-end test caught this at 2s; I confirmed it directly and shrank it. It can't be dropped: one gated write emits several inotify events (truncate, then write), and without grace the guard would "undo" an approved write to its half-written state. A test asserts the window exists.
+2. **Command leases cover their cwd for the command's duration** (up to 300s). A native write under that directory while a gated command runs is indistinguishable from the command's own.
+3. **After the fact:** it undoes writes, it doesn't prevent them. Anything read or sent before the undo is out. Layers 1 and 2 prevent; this layer only undoes.
+4. **Files over 5MB** aren't snapshotted: a change to an unchanged-size large file can't be detected by content, and restore falls back to git (tracked) or nothing (untracked).
+
+**Tests: `tests/test_fs_guard.py` (17), real inotify events in a real git repo; the file passed 5 consecutive runs.**
+- tracked edit reverted
+- untracked new file quarantined
+- untracked existing file restored
+- **script-wrapper bypass caught** (`python3 wrapper.py`, the case `deniedCommands` can't see)
+- `rm` untracked restored
+- **`mv` tracked out of the tree restored**
+- `mv` inside the tree: source restored, destination quarantined
+- `rm -rf` directory restored
+- `mv` onto a known file restores both
+- leased write accepted and becomes the restore point (a later bypass restores to the approved 1.3, not HEAD's 1.2)
+- directory lease covers a command's writes
+- expired lease doesn't cover
+- one bypass, one event, no loop
+- git internals, quarantine and `*.db` ignored
+- **end to end:** kosha-mcp `write_file`/`edit_file` through a live koshad pass, and a native write afterwards is reverted to the approved content
+- the grace-window gap is asserted
+- koshad hosts the guard only when configured
+
+Full suite: 760 passed.
+
+**Not verified:** a real Bob native tool (`write_file`/`execute_command` with the groups left enabled) driving the bypass. That needs the IDE, so the tests make the equivalent filesystem writes directly, which is what those tools end in. To check it live: run koshad with `KOSHA_GUARD_ROOT=<workspace>`, use a mode *with* `edit`, ask it to `write_file` something without the hook registered, and watch `/stream` for `bypass_detected`.
+
+## Next (task 10 onward), not started
+demo_repo → demo scenario → web/.
