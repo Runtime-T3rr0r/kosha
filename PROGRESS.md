@@ -439,5 +439,12 @@ Full suite: 760 passed.
 - **`batch_id` is NOT implemented,** on hold until it's confirmed whether batch escalation is on task 11's demo path.
 - **Teammate gap found (`convergence.targets_of`, not touched):** path targets from command text aren't resolved against `action.cwd`, while file tools send absolute paths. So `edit_file VERSION` (`path:/…/work/VERSION`) and `sed -i … VERSION` (`path:VERSION`) **don't converge on the same file.** Suggested one-line fix: `command_targets(str(command), action.cwd)`. **Task 11 must make the two colliding agents use the same form** (e.g. both `git push` the same branch, or both use file tools on the same file).
 
+## 2026-09-27: Bob prompted on every kosha call. Fixed with a global approval setting
+
+- **Symptom:** in the first live tab, Bob asked for approval on each of the three `mcp__kosha-release-bump__run_command` calls, despite `alwaysAllow` in `.bob/mcp.json`.
+- **Cause, from Bob's source:** `alwaysAllow` *is* read (`seedTaskAllowedMcpTools` copies it into the task's `taskAllowedMcpTools`). But `shouldAutoApprove` for an MCP tool also requires the `mcp` permission in `approval.allowed_permissions`, whose default is `["read"]`. Settings are deep-merged over the defaults (`Soe`/`NPe`), and `allowed_permissions` is unioned with the default, not replaced. Auto-approve is also forced off in an untrusted workspace.
+- **Fix (user-approved, global):** `~/.bob/settings/settings.json` now has `approval.allowed_permissions: ["mcp"]` (effective `["read","mcp"]`). Backup: `settings.json.bak.kosha-20260927-012622`; the pre-existing `settings.json.bak` is untouched. Only MCP tools listed in a server's `alwaysAllow` are auto-approved, i.e. only kosha's tools; other MCP servers still prompt. **Open new task tabs after changing it:** `allowed_permissions` is also a per-task key, and a task-level value overrides the global one. `setup_demo.py` now prints this as a prerequisite.
+- **First live Bob run through kosha-mcp:** one tab (`release-bump`) ran `git status --short`, `git log --oneline -1` and `cat VERSION` via `mcp__kosha-release-bump__run_command`. koshad recorded all three as `release-bump`, harness `bob`, allow, confirmed. Bob's own task record shows the same three tool calls. **The concurrency check still needs the other two tabs.**
+
 ## Next (task 11 onward), not started
 demo scenario → web/.

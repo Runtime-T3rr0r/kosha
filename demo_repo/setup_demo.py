@@ -193,7 +193,9 @@ def main(argv: list[str] | None = None) -> None:
     print(f"demo ready in {out['root']}\n"
           f"  1. start koshad:   {out['start']}\n"
           f"  2. open in Bob:    {out['work']}  (trust the workspace; reload MCP servers and modes)\n"
-          f"  3. fleet modes:    {', '.join(FLEET)}  (session {SESSION})")
+          f"  3. fleet modes:    {', '.join(FLEET)}  (session {SESSION})\n"
+          f"  prerequisite: ~/.bob/settings/settings.json needs \"mcp\" in approval.allowed_permissions,\n"
+          f"                or Bob asks for approval on every kosha tool call (Kosha already decides).")
 
 
 if __name__ == "__main__":
