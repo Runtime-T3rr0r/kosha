@@ -22,10 +22,12 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import socket
 import sqlite3
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -64,13 +66,33 @@ def run(*cmd: str, cwd: Path) -> None:
     subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
 
 
+def koshad_running(port: int = 8765) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def wipe(root: Path) -> None:
-    """Delete a previous demo root, but only one this script created."""
+    """Delete a previous demo root, but only one this script created, and never while
+    koshad still has its ledger open (a dying koshad re-creates kosha.db mid-delete)."""
     if not root.exists():
         return
     if not (root / MARKER).exists():
         sys.exit(f"refusing to delete {root}: it exists but has no {MARKER} marker")
-    shutil.rmtree(root)
+    if koshad_running():
+        sys.exit("koshad is still running on 127.0.0.1:8765 (it holds the demo ledger). "
+                 "Stop it, wait until it has exited, then run this again.")
+    for attempt in range(10):             # the marker goes last, so a failed wipe can be retried
+        try:
+            for child in root.iterdir():
+                if child.name != MARKER:
+                    shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+            (root / MARKER).unlink()
+            root.rmdir()
+            return
+        except OSError:
+            time.sleep(0.3)
+    sys.exit(f"could not delete {root}: something keeps writing to it. Is koshad still running?")
 
 
 def copy_template(work: Path) -> None:

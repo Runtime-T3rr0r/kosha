@@ -181,3 +181,12 @@ def classify(demo, tool, raw=None, argv=(), targets=()):
 def test_scenario_step_levels(demo_config, step, tool, raw, targets, level):
     argv = ["git", *raw["args"].split()] if tool == "git" else []
     assert classify(demo_config, tool, raw, argv, targets).level == level, step
+
+
+def test_reset_refuses_while_koshad_is_running(tmp_path, monkeypatch):
+    # a dying koshad re-creates kosha.db mid-delete, so never wipe under a live one
+    first = setup_demo.build(tmp_path / ".demo")
+    monkeypatch.setattr(setup_demo, "koshad_running", lambda port=8765: True)
+    with pytest.raises(SystemExit, match="koshad is still running"):
+        setup_demo.build(tmp_path / ".demo")
+    assert (first["root"] / setup_demo.MARKER).exists() and first["work"].exists()   # untouched
