@@ -10,6 +10,7 @@ import json
 import os
 import typing
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -87,11 +88,25 @@ class Resolve(BaseModel):
     note: Optional[str] = None
 
 
-def create_app(db: Optional[KoshaDB] = None) -> FastAPI:
+def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None) -> FastAPI:
+    """guard_root (or KOSHA_GUARD_ROOT): working tree fs_guard watches while koshad runs."""
     table = load_table()
     if db is None:
         db = KoshaDB()
-    app = FastAPI(title="koshad")
+    guard_root = guard_root or os.environ.get("KOSHA_GUARD_ROOT")
+
+    @asynccontextmanager
+    async def lifespan(app):
+        guard = None
+        if guard_root:
+            from kosha.system.fs_guard import FsGuard
+            guard = FsGuard(guard_root, db, os.environ.get("KOSHA_GUARD_SESSION")).start()
+        app.state.guard = guard
+        yield
+        if guard:
+            guard.stop()
+
+    app = FastAPI(title="koshad", lifespan=lifespan)
     app.state.db = db
 
     @app.post("/decide")

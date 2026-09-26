@@ -25,7 +25,9 @@ from kosha.pricing.pricing import load_table, price as cell_price
 from kosha.system.action import Action
 
 FLEET = "__fleet__"        # accounts row holding the fleet-wide total for a session
-LEASE_GRACE = 2.0          # seconds a write lease survives its action's settle
+LEASE_GRACE = 0.5          # seconds a write lease survives its action's settle: inotify
+                           # delivers events a few ms after the write. A bypass write to the
+                           # same path inside this window is accepted (tested, documented).
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "kosha.db"
 
 SCHEMA = """
