@@ -17,10 +17,11 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from kosha.pricing import policy
@@ -30,6 +31,7 @@ from kosha.system.action import Action, Harness, Tool
 from kosha.system.kosha_db import KoshaDB
 
 TOOLS = set(typing.get_args(Tool))
+UI_PAGE = Path(__file__).with_name("ui.html")
 HARNESSES = set(typing.get_args(Harness))
 UNKNOWN_LEVEL, UNKNOWN_CELL = 4, "irrev|shared|nopriv"
 
@@ -163,6 +165,12 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None,
                     return
                 await asyncio.sleep(0.5)
         return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.get("/ui", response_class=HTMLResponse)
+    def ui() -> str:
+        """The human's approval page (open in Bob: Simple Browser: Show -> /ui). It uses
+        only the endpoints above; approving needs the passphrase, typed into the page."""
+        return UI_PAGE.read_text()
 
     @app.get("/price_table")
     def price_table() -> dict:

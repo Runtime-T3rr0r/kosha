@@ -295,11 +295,17 @@ class KoshaDB:
     # --- approvals ---
 
     def pending_approvals(self) -> list[dict]:
+        """Pending approvals with their bundle, and why they were held (the held action's
+        rule, reason and suggestion) so a human can decide."""
         with self._conn() as c:
-            rows = c.execute("SELECT * FROM approvals WHERE status='pending' ORDER BY id").fetchall()
+            rows = c.execute(
+                "SELECT ap.*, a.rule, a.reason, a.suggestion FROM approvals ap "
+                "LEFT JOIN actions a ON a.action_id = ap.action_id "
+                "WHERE ap.status='pending' ORDER BY ap.id").fetchall()
         return [{"id": r["id"], "action_id": r["action_id"], "session_id": r["session_id"],
                  "agent_id": r["agent_id"], "bundle": json.loads(r["bundle"]),
-                 "status": r["status"], "created_at": r["created_at"]} for r in rows]
+                 "status": r["status"], "created_at": r["created_at"], "rule": r["rule"],
+                 "reason": r["reason"], "suggestion": r["suggestion"]} for r in rows]
 
     def resolve_approval(self, approval_id: int, decision: str, note: Optional[str] = None) -> dict:
         """approve_once: the agent's next identical /decide is allowed and charged.
