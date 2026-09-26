@@ -19,7 +19,8 @@ from kosha.pricing.rubric import LEVEL_NAMES
 if TYPE_CHECKING:
     from kosha.system.action import Action
 
-CONSEQUENTIAL = 3          # L3+ counts toward the fleet escalation rule
+CONSEQUENTIAL = 3          # L3+ counts toward the escalation rule once 2+ agents are in the window
+SINGLE_AGENT_CONSEQUENTIAL = 4   # L4+ while only one agent is in the window
 SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
 DROP_DB = re.compile(r"\bdrop\s+(database|schema)\b", re.I)
 
@@ -96,11 +97,28 @@ def _hard_deny_reason(action: Action) -> Optional[str]:
 
 # --- fleet escalation ---
 
-def escalation_triggered(recent_actions: list[tuple[str, int]]) -> bool:
-    """Two-plus consequential (>= L3) actions in the window, from any agent(s).
+def escalation_threshold(recent_actions: list[tuple[str, int]], agent_id: Optional[str] = None) -> int:
+    """Level at which an action counts as consequential, by fleet size in the window.
 
-    Single agent or several, no distinctness check: one agent repeating consequential
-    actions is covered the same as several agents each doing one.
+    agent_id is the agent making the action being decided; it counts toward the
+    window's distinct agents, so a second agent acting brings the threshold down.
+
+    One distinct agent -> L4. Two or more -> L3. A single agent at L3+ tripped the rule
+    in ~99 of 100 benign SWE-smith sessions (bench/benign_spend.py), mostly from
+    ordinary file-creation edits, so for one agent L3+ is noise. Consequential actions
+    spread across several agents are the cross-agent signal the rule exists for, and
+    keep the L3+ threshold.
+    """
+    agents = {a for a, _ in recent_actions} | ({agent_id} if agent_id is not None else set())
+    return CONSEQUENTIAL if len(agents) >= 2 else SINGLE_AGENT_CONSEQUENTIAL
+
+
+def escalation_triggered(recent_actions: list[tuple[str, int]], agent_id: Optional[str] = None) -> bool:
+    """Two-plus consequential actions in the window, at escalation_threshold().
+
+    No distinctness requirement on the triggering actions themselves: one agent
+    repeating consequential actions counts the same as several agents each doing one.
+    Fleet size only sets the threshold (L4+ for one agent, L3+ for two or more).
 
     Deliberately does NOT require strictly rising levels. The rising requirement came
     from the source paper's single-trajectory escalation (one agent ramping up over
@@ -109,7 +127,15 @@ def escalation_triggered(recent_actions: list[tuple[str, int]]) -> bool:
     sequence, so requiring a rise would under-trigger on that case. Rising pairs still
     trigger: they are a subset of this condition, not a separate one.
     """
-    return sum(1 for _, lvl in recent_actions if lvl >= CONSEQUENTIAL) >= 2
+    threshold = escalation_threshold(recent_actions, agent_id)
+    return sum(1 for _, lvl in recent_actions if lvl >= threshold) >= 2
+
+
+def escalation_asks(recent_actions: list[tuple[str, int]], agent_id: str, level: int) -> bool:
+    """Whether this action (agent_id, level) is stopped by the escalation rule: it is
+    itself consequential at the window's threshold and the window already triggered."""
+    return (level >= escalation_threshold(recent_actions, agent_id)
+            and escalation_triggered(recent_actions, agent_id))
 
 
 def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> Decision:
@@ -135,8 +161,9 @@ def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> 
                    "Wait for approval, or use a variant that doesn't grant access or add "
                    "persistence (e.g. chmod 644 instead of 777).")
 
-    if level >= CONSEQUENTIAL and escalation_triggered(s.recent_actions):
-        prior = ", ".join(f"{a} L{l}" for a, l in s.recent_actions if l >= CONSEQUENTIAL)
+    if escalation_asks(s.recent_actions, action.agent_id, level):
+        threshold = escalation_threshold(s.recent_actions, action.agent_id)
+        prior = ", ".join(f"{a} L{l}" for a, l in s.recent_actions if l >= threshold)
         return out("ask", "escalation",
                    f"Kosha: fleet escalation. Two-plus consequential actions this "
                    f"window ({prior}); this {name} action needs human approval.",

@@ -90,6 +90,48 @@
   privilege: false
   read_only: true
   note: "curl/wget GET, no payload leaves"
+- id: cd
+  match: {family: shell, sub: cd, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "changes the shell's working directory only"
+- id: sort
+  match: {family: shell, sub: sort, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "prints sorted input; `sort -o file` writes, not modeled"
+- id: head
+  match: {family: shell, sub: head, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "prints the start of a file or stream"
+- id: echo_nonsecret
+  match: {family: shell, sub: echo, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "prints text; echo of secret-like vars matches secret_echo_var, echo > file adds a file_write segment"
+- id: xargs
+  match: {family: shell, sub: xargs, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "bare xargs (echoes input); `xargs CMD ...` is matched as CMD, so `xargs rm` prices as rm"
+- id: pytest
+  match: {family: test, sub: pytest, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "pytest or python -m pytest; runs repo test code, treated as read-only"
 
 # --- file edits / writes ---
 - id: file_write_tracked_clean
@@ -113,6 +155,13 @@
   privilege: false
   read_only: false
   note: "write outside repo/workspace, e.g. ../shared_lib"
+- id: mkdir
+  match: {family: mkdir, sub: null, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "creates a directory; rmdir undoes it"
 
 # --- rm / destructive local ---
 - id: rm_tracked_clean
@@ -488,6 +537,13 @@
   privilege: true
   read_only: false
   note: "world-writable permissions"
+- id: chmod_exec
+  match: {family: chmod, sub: null, flags_any: ["+x", "u+x", "a+x", "ug+x"]}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "makes a file executable, not a privilege grant; on a tie with chmod_777 (both modes given) chmod_777 wins by file order"
 - id: chown
   match: {family: chown, sub: null, flags_any: []}
   reversible: false
@@ -530,6 +586,18 @@
   privilege: true
   read_only: false
   note: "grants cluster access"
+
+# --- opaque scripts ---
+# Flat fallback for python <file>, bash|sh <file>, npm run <script>: effects are hidden
+# inside the script, so it is charged a fixed irrev|local cell. Scanning short scripts
+# (< ~300 lines) for their real effects is not built yet.
+- id: opaque_script
+  match: {family: script, sub: opaque, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "opaque local script; flat fallback, contents not scanned"
 
 # --- deploy ---
 - id: deploy_trigger

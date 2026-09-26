@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from kosha.pricing.policy import Decision, LedgerState, decide, escalation_triggered
+from kosha.pricing.policy import (Decision, LedgerState, decide, escalation_threshold,
+                                  escalation_triggered)
 
 
 def act(argv=("ls",), targets=(), raw=None, agent_id="main"):
@@ -113,17 +114,50 @@ def test_escalation_rising_pair_distinct_agents():
 def test_escalation_falling_pair_distinct_agents():
     assert escalation_triggered([("sub-1", 4), ("sub-2", 3)])
 
-def test_escalation_single_agent_two_prior_consequential():
-    assert escalation_triggered([("sub-1", 3), ("sub-1", 3)])
+# single agent in the window: L4+ threshold; a second distinct agent drops it to L3+
+def test_threshold_by_fleet_size():
+    assert escalation_threshold([]) == 4
+    assert escalation_threshold([("sub-1", 3), ("sub-1", 3)]) == 4
+    assert escalation_threshold([("sub-1", 3), ("sub-1", 3)], "sub-1") == 4
+    assert escalation_threshold([("sub-1", 3)], "sub-2") == 3
+    assert escalation_threshold([("sub-1", 3), ("sub-2", 3)]) == 3
 
-def test_single_agent_third_consequential_action_asks():
-    recent = []
-    rules = []
+def test_single_agent_two_L3_does_not_trigger():
+    recent = [("sub-1", 3), ("sub-1", 3)]
+    assert not escalation_triggered(recent)
+    assert not escalation_triggered(recent, "sub-1")
+    assert decide(act(agent_id="sub-1"), 3, "irrev|local|nopriv", state(recent=recent)).rule == "ok"
+
+def test_single_agent_two_L4_triggers():
+    recent = [("sub-1", 4), ("sub-1", 4)]
+    assert escalation_triggered(recent, "sub-1")
+    s = state(fleet_budget=1000, agent_cap=1000, recent=recent)
+    d = decide(act(agent_id="sub-1"), 4, "irrev|shared|nopriv", s)
+    assert (d.decision, d.rule) == ("ask", "escalation")
+
+def test_single_agent_L3_after_two_L4_is_not_escalated():
+    s = state(fleet_budget=1000, agent_cap=1000, recent=[("sub-1", 4), ("sub-1", 4)])
+    assert decide(act(agent_id="sub-1"), 3, "irrev|local|nopriv", s).rule == "ok"
+
+def test_two_agents_two_L3_triggers():
+    recent = [("sub-1", 3), ("sub-2", 3)]
+    assert escalation_triggered(recent)
+    d = decide(act(agent_id="sub-1"), 3, "irrev|local|nopriv", state(recent=recent))
+    assert (d.decision, d.rule) == ("ask", "escalation")
+
+def test_second_agent_acting_drops_threshold_to_L3():
+    recent = [("sub-1", 3), ("sub-1", 3)]
+    assert escalation_triggered(recent, "sub-2")
+    assert decide(act(agent_id="sub-2"), 3, "irrev|local|nopriv", state(recent=recent)).rule == "escalation"
+
+def test_single_agent_third_L4_action_asks():
+    recent, rules = [], []
+    s = dict(fleet_budget=1000, agent_cap=1000)
     for _ in range(3):
-        d = decide(act(agent_id="sub-1"), 3, "irrev|local|nopriv", state(recent=recent))
+        d = decide(act(agent_id="sub-1"), 4, "irrev|shared|nopriv", state(recent=recent, **s))
         rules.append(d.rule)
         if d.decision == "allow":
-            recent.append(("sub-1", 3))
+            recent.append(("sub-1", 4))
     assert rules == ["ok", "ok", "escalation"]
 
 def test_escalation_mixed_agents_counts_all():

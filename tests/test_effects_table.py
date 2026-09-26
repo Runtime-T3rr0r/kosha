@@ -61,6 +61,11 @@ TABLE = [
     ("docker run (conservative default)", 3, ["docker_run"]),
     ("docker ps", 0, ["docker_ps"]),
     ("docker exec", 4, ["docker_exec"]),
+    ("cd, sort, head, echo (non-secret), bare xargs, pytest", 0,
+     ["cd", "sort", "head", "echo_nonsecret", "xargs", "pytest"]),
+    ("mkdir", 2, ["mkdir"]),
+    ("chmod +x", 2, ["chmod_exec"]),
+    ("opaque script (python/bash <file>, npm run), flat fallback", 3, ["opaque_script"]),
 ]
 
 EXPECTED = {eid: (row, level) for row, level, ids in TABLE for eid in ids}
