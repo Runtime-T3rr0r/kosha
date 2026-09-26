@@ -25,6 +25,7 @@ from kosha.pricing.pricing import price as cell_price
 from kosha.system.action import Action
 
 FLEET = "__fleet__"        # accounts row holding the fleet-wide total for a session
+LEASE_GRACE = 2.0          # seconds a write lease survives its action's settle
 DEFAULT_DB = Path(__file__).resolve().parents[2] / "kosha.db"
 
 SCHEMA = """
@@ -69,9 +70,10 @@ CREATE TABLE IF NOT EXISTS events(
     payload    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS expected_writes(
-    path       TEXT PRIMARY KEY,
-    action_id  TEXT,
-    expires_at TEXT
+    path       TEXT NOT NULL,             -- a file, or a directory = lease on everything under it
+    action_id  TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (path, action_id)         -- concurrent actions can lease the same path
 );
 """
 
@@ -173,8 +175,13 @@ class KoshaDB:
     # --- decide + reserve ---
 
     def decide(self, action: Action, level: int, cell: str,
-               policy: Callable[[Action, int, str, LedgerState], Decision]) -> Decision:
-        """Read window state, run policy, and reserve on allow, all under one write lock."""
+               policy: Callable[[Action, int, str, LedgerState], Decision],
+               write_leases: tuple[tuple[str, float], ...] = ()) -> Decision:
+        """Read window state, run policy, and reserve on allow, all under one write lock.
+
+        write_leases: (path, ttl_seconds) pairs recorded in expected_writes on allow, in
+        the same transaction, so fs_guard never sees an allowed write before its lease.
+        """
         t = now()
         fp = fingerprint(action)
         with self._txn() as c:
@@ -210,6 +217,9 @@ class KoshaDB:
                        "decision": asdict(d)}
             if d.decision == "allow":
                 self._charge(c, action.session_id, action.agent_id, d.price)
+                for path, ttl in write_leases:
+                    c.execute("INSERT OR REPLACE INTO expected_writes VALUES (?,?,?)",
+                              (path, action.action_id, iso(t + timedelta(seconds=ttl))))
                 self._event(c, "action_reserved", action.session_id, summary)
             elif d.decision == "ask":
                 bundle = [{"action_id": r["action_id"], "agent_id": r["agent_id"],
@@ -232,8 +242,12 @@ class KoshaDB:
     # --- settle ---
 
     def settle(self, action_id: str, outcome: str) -> dict:
-        """success -> confirmed (spend stays); failure -> cancelled (reservation refunded)."""
+        """success -> confirmed (spend stays); failure -> cancelled (reservation refunded).
+        Either way the action's write leases shrink to LEASE_GRACE: fs events can arrive
+        a moment after the write that caused them."""
         with self._txn() as c:
+            c.execute("UPDATE expected_writes SET expires_at=MIN(expires_at, ?) WHERE action_id=?",
+                      (iso(now() + timedelta(seconds=LEASE_GRACE)), action_id))
             row = c.execute("SELECT * FROM actions WHERE action_id=?", (action_id,)).fetchone()
             if row is None:
                 return {"status": "unknown_action"}
@@ -297,14 +311,18 @@ class KoshaDB:
     # --- expected_writes (fs_guard) ---
 
     def expect_write(self, path: str, action_id: str, ttl_seconds: float = 10) -> None:
+        """Lease outside /decide (tests, fs_guard's own reverts)."""
         with self._txn() as c:
             c.execute("INSERT OR REPLACE INTO expected_writes VALUES (?,?,?)",
                       (path, action_id, iso(now() + timedelta(seconds=ttl_seconds))))
 
     def match_expected(self, path: str) -> Optional[str]:
-        """action_id of an unexpired reservation for path, or None. Not consumed:
-        one gated write can fire several fs events (create + modify) within its TTL."""
+        """action_id of an unexpired lease on path or a directory above it, or None.
+        Not consumed: one gated write can fire several fs events (create + modify)."""
         with self._txn() as c:
             c.execute("DELETE FROM expected_writes WHERE expires_at<?", (iso(now()),))
-            row = c.execute("SELECT action_id FROM expected_writes WHERE path=?", (path,)).fetchone()
+            row = c.execute(
+                "SELECT action_id FROM expected_writes WHERE path=? "
+                "OR substr(?, 1, length(path) + 1) = path || '/' ORDER BY expires_at DESC LIMIT 1",
+                (path, path)).fetchone()
         return row["action_id"] if row else None

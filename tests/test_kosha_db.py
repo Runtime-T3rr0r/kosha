@@ -159,3 +159,46 @@ def test_expected_writes_ttl(db):
     assert db.match_expected("/r/a.py") == "x1"      # not consumed within TTL
     assert db.match_expected("/r/b.py") is None      # expired
     assert db.match_expected("/r/c.py") is None
+
+
+# --- write leases (fs_guard) ---
+
+def test_allow_records_write_leases_in_the_same_transaction(db):
+    a = act()
+    db.decide(a, 3, L3_CELL, policy_decide, write_leases=(("/r/app.py", 30),))
+    assert db.match_expected("/r/app.py") == a.action_id
+
+
+def test_ask_and_deny_record_no_leases(db):
+    db.decide(act(), 5, "*|*|priv", policy_decide, write_leases=(("/r/priv.sh", 30),))
+    db.decide(act(argv=("rm", "-rf", "/")), 3, L3_CELL, policy_decide, write_leases=(("/r/x", 30),))
+    assert db.match_expected("/r/priv.sh") is None
+    assert db.match_expected("/r/x") is None
+
+
+def test_directory_lease_covers_children_not_siblings(db):
+    db.expect_write("/r/demo", "cmd1", ttl_seconds=60)
+    assert db.match_expected("/r/demo") == "cmd1"
+    assert db.match_expected("/r/demo/src/app.py") == "cmd1"
+    assert db.match_expected("/r/demo_other/app.py") is None     # prefix, not substring
+    assert db.match_expected("/r") is None
+
+
+def test_concurrent_leases_on_one_path_do_not_clobber(db):
+    a, b = act(), act()
+    db.decide(a, 3, L3_CELL, policy_decide, write_leases=(("/r/demo", 300),))
+    db.decide(b, 3, L3_CELL, policy_decide, write_leases=(("/r/demo", 300),))
+    db.settle(a.action_id, "success")               # a finishing must not end b's lease
+    with db._conn() as c:
+        rows = dict(c.execute("SELECT action_id, expires_at FROM expected_writes").fetchall())
+    assert set(rows) == {a.action_id, b.action_id}
+    assert rows[a.action_id] < rows[b.action_id]
+
+
+def test_settle_shrinks_lease_to_grace(db, monkeypatch):
+    import kosha.system.kosha_db as kdb
+    monkeypatch.setattr(kdb, "LEASE_GRACE", -1)     # grace already over
+    a = act()
+    db.decide(a, 3, L3_CELL, policy_decide, write_leases=(("/r/app.py", 300),))
+    db.settle(a.action_id, "failure")
+    assert db.match_expected("/r/app.py") is None

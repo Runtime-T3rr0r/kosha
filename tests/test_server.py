@@ -91,3 +91,15 @@ def test_decide_uses_the_parser(api):
     push = api.post("/decide", json=action(action_id="r2", raw={"command": "git push -f origin main"})).json()
     assert (ls["level"], ls["price"]) == (0, 0)
     assert (push["level"], push["cell"]) == (4, "irrev|shared|nopriv")
+
+
+def test_write_leases_per_tool():
+    from kosha.api.server import COMMAND_LEASE, FILE_LEASE, coerce_action, write_leases
+    edit = coerce_action(action(tool="edit_file", cwd="/r/demo", targets=["src/app.py"],
+                                raw={"path": "src/app.py"}))
+    cmd = coerce_action(action(tool="run_command", cwd="/r/demo"))
+    db_exec = coerce_action(action(tool="db_exec", cwd="/r/demo"))
+    nocwd = coerce_action(action(tool="run_command", cwd=""))
+    assert write_leases(edit) == (("/r/demo/src/app.py", FILE_LEASE),)
+    assert write_leases(cmd) == (("/r/demo", COMMAND_LEASE),)
+    assert write_leases(db_exec) == () and write_leases(nocwd) == ()

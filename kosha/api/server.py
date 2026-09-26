@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from kosha.pricing import policy
 from kosha.pricing.pricing import load_table
-from kosha.system import parser
+from kosha.system import parser, resolvers
 from kosha.system.action import Action, Harness, Tool
 from kosha.system.kosha_db import KoshaDB
 
@@ -49,6 +49,27 @@ def coerce_action(body: dict) -> Action:
         targets=strs(body.get("targets")),
         ts=str(body.get("ts") or datetime.now(timezone.utc).isoformat()),
     )
+
+
+FILE_LEASE, COMMAND_LEASE = 30.0, 300.0   # seconds; settle shrinks either to a short grace
+
+
+def write_leases(action: Action) -> tuple[tuple[str, float], ...]:
+    """Paths fs_guard should accept writes under if this action is allowed.
+
+    File tools lease their exact paths. Commands can write anywhere, so they lease
+    their cwd: a native write under that directory while the command runs is
+    indistinguishable from the command's own and is accepted (documented gap).
+    db_exec leases nothing; the DB file is fs_guard's ignore list's business.
+    """
+    if action.tool in ("edit_file", "write_file"):
+        paths = [*action.targets, *(v for k, v in (action.raw or {}).items()
+                                    if k in ("path", "file_path") and isinstance(v, str))]
+        out = {resolvers.abspath(p, action.cwd) for p in paths}
+        return tuple((p, FILE_LEASE) for p in sorted(x for x in out if x))
+    if action.tool == "db_exec" or not action.cwd:
+        return ()
+    return ((resolvers.abspath(action.cwd, "/"), COMMAND_LEASE),)
 
 
 def classify(action: Action) -> tuple[int, str]:
@@ -81,7 +102,7 @@ def create_app(db: Optional[KoshaDB] = None) -> FastAPI:
             level, cell = classify(action)
         except Exception:
             level, cell = UNKNOWN_LEVEL, UNKNOWN_CELL
-        return asdict(db.decide(action, level, cell, policy.decide))
+        return asdict(db.decide(action, level, cell, policy.decide, write_leases(action)))
 
     @app.post("/settle")
     def settle(s: Settle) -> dict:
