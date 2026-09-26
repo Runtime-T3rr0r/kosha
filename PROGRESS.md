@@ -66,5 +66,36 @@ Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js
 - **PostToolUse fires only when the tool did *not* error**, and its payload adds `tool_response`. A failed native tool never settles through the hook, so its reservation stays charged. That's the conservative side, but worth knowing.
 - **Default approval block:** `approval.allowedExecutors = [{toolId: "execute_command", approvedCommands: [...read-only prefixes], deniedCommands: []}]`. Denied wins over approved, and it's matched per sub-command.
 
-## Next (task 6 onward), not started
-bob_mcp.py → claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
+## 2026-09-26: task 6 done (kosha-mcp)
+
+- `kosha/adapters/bob_mcp.py`, console script `kosha-mcp`: a stdio MCP server on the `mcp` 2.2 SDK's low-level `Server`.
+  - Tools: `run_command(command, cwd?)`, `edit_file(path, old, new)`, `write_file(path, content)`, `git(args)`, `db_exec(db, sql)`, `deploy(target)`.
+  - Flow: build Action → `client.decide` → execute **only** on allow → `client.settle`.
+  - ask/deny return `is_error` with the reason and suggestion. For ask, it also tells the agent to retry the same call once a human approves.
+  - Any exception inside the handler becomes an `is_error` result that says "nothing was run". Nothing surfaces as a success.
+- **Identity:** `resolve_agent_id()` as specified, defaulting to `per_mode_instance` (`--agent <mode slug>`). One tweak: inline mode falls back to the instance name instead of returning `None`.
+  - Bob's MCP entry supports a `groups` field ("Restrict the server's tools to specific modes"), so each instance can be pinned to its own mode. Without that, any mode could call another mode's instance and borrow its identity. **Confirm `groups` actually enforces this in a live Bob run.**
+- `db_exec` supports sqlite aliases only (the demo's dev/prod). Relative sqlite paths resolve against the kosha repo root, and it never echoes a DB URL. `deploy` runs `KOSHA_DEPLOY_CMD` (default `./deploy.sh <target>`) in the workspace.
+- **Write leases:** on allow, `/decide` now records `expected_writes` in the *same* transaction. File tools lease their exact path for 30s; commands lease their cwd for 300s; `db_exec` leases nothing. Settle shrinks the lease to a 2s grace. The `expected_writes` key became `(path, action_id)`, so concurrent commands in one directory don't clobber each other's lease. `match_expected` treats a directory lease as covering everything under it.
+  - **Known gap:** while a gated command runs, a native bypass write under the same cwd is indistinguishable from the command's own and gets accepted. Layers 1 and 2 (mode groups, kosha-hook) still stop it.
+- Tests: `tests/test_bob_mcp.py` (19). They run against a real `koshad` (`tests/conftest.py::live_koshad`, uvicorn on a free port), a temp git workspace and sqlite dev/prod DBs:
+  - allow/confirm, fail/refund, and the hard-deny prod drop (the prod table survives)
+  - ask held, then approved, then retry runs (the chmod only lands after approval)
+  - koshad down: canary files are never created
+  - over the MCP protocol: two instances record two agent ids; a crash inside the adapter comes back as an error; the real stdio entrypoint runs as a subprocess
+  - Full suite: 486 passed.
+  - The protocol tests caught a real bug: SDK 2.x passes `_meta` as a dict, and the line reading it sat outside the try/except. It's fixed, with a regression test.
+
+**Human step (needs live Bob, not done by me):** register one instance per custom mode, in `.bob/mcp.json` (workspace) or `~/.bob/settings/mcp.json` (global):
+```json
+{"mcpServers": {
+  "kosha-sub1": {"command": "/abs/path/kosha/.venv/bin/kosha-mcp",
+                 "args": ["--agent", "sub1", "--session", "release-1.3", "--workspace", "${workspaceFolder}"],
+                 "groups": ["sub1"], "alwaysAllow": ["run_command", "edit_file", "write_file", "git", "db_exec", "deploy"],
+                 "timeout": 300000}
+}}
+```
+Repeat for each mode, giving every instance the same `--session`. `alwaysAllow` is safe here because kosha makes the decision. Keep `timeout` at or above 270s so long commands aren't cut off by Bob. Start `koshad` first. I'll put the demo's real copy of this in `demo_repo/.bob/` in task 10.
+
+## Next (task 7 onward), not started
+claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
