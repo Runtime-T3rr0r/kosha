@@ -264,6 +264,7 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 
 **Known limitations in v1. Name these openly in the pitch deck:**
 - **Native-tool calls are priced, but attributed to a shared pool, not per-agent.** Bob's native tools (`execute_command`, `write_file`, `apply_diff`, ...) are gated by kosha-hook and charged to one pooled identity, `bob-native`, because Bob's hook payload carries no agent identity. Fleet budget and escalation count them; per-agent caps can't separate subagents that use native tools. Per-agent precision holds only for calls made through kosha-mcp (one instance per mode, `groups`-pinned, verified live above). The demo modes remove native tools (layer 1), so in the demo `bob-native` should see no calls at all.
+- **Raw redaction is deferred (decided 2026-09-27).** `actions.raw`, approval bundles and events store tool input in plain text: commands, SQL, file bodies. Not redacting, because redacting the approval bundle would hide the content from the human who needs to see it to decide, and redacting only the post-resolution copy is more engineering than we have time for. **Mitigation:** (a) reset `kosha.db` fresh immediately before recording the demo; (b) the task 11 demo script uses only obviously fake secret-like strings (e.g. `sk-fake-demo-...`), never anything real.
 - **Future work: agent-visible budget query.** Agents can't ask Kosha about their remaining budget or the price of an action before trying it. There is deliberately no `kosha_status`/`kosha_quote` tool; adapters call only `/decide` and `/settle`. Revisit only if the task 11 demo shows it's needed.
 
 **Decisions:**
@@ -305,7 +306,7 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 ## 2026-09-27: task 9 done (fs_guard). Stop-and-report checkpoint
 
 **Status of other items at this checkpoint:**
-- **Raw redaction: NOT done.** Proposed, not started; the token and fingerprint work took priority. Open tension: approvers must see the content, since hiding it was one of the gaps just closed. A workable split is to mask token-like values everywhere but hash file bodies only in `events` and `actions.raw`, never in the approval bundle. Awaiting a decision.
+- **Raw redaction:** deferred by decision. See Known limitations in v1.
 - **Approval-token bypass in `policy.py`: CLOSED, verified 2026-09-27.** Teammate commit `aa15ad0` ("removes the approval_token override on hard-deny patterns"). Checked by me, not taken on the commit message:
   - **The diff removes the exemption outright:** `_has_approval_token` is deleted, the prod-drop hard deny is unconditional (`if _drops_prod_db(action): return ...`), and the "attach an approval token" suggestion is replaced with "Hard-deny patterns have no override". `grep` finds no reader of `approval_token` left in `kosha/`; the only references are the adapters' strip lists.
   - **Re-ran tonight's reproduction** against the rebased tree. **Direct `/decide`** with `raw: {db: prod, sql: "drop database app", approval_token: "i-made-this-up"}`, bypassing the adapters' stripping so it tests the policy fix itself, gives **deny / hard_deny** (tonight: allow / ok). Through kosha-mcp it gives `KOSHA DENIED`. Full suite on the rebased tree: 799 passed.
@@ -350,5 +351,50 @@ Full suite: 760 passed.
 
 **Not verified:** a real Bob native tool (`write_file`/`execute_command` with the groups left enabled) driving the bypass. That needs the IDE, so the tests make the equivalent filesystem writes directly, which is what those tools end in. To check it live: run koshad with `KOSHA_GUARD_ROOT=<workspace>`, use a mode *with* `edit`, ask it to `write_file` something without the hook registered, and watch `/stream` for `bypass_detected`.
 
-## Next (task 10 onward), not started
-demo_repo → demo scenario → web/.
+## 2026-09-27: task 10 done (demo_repo)
+
+- **`demo_repo/` is a committed template** (a nested git repo can't be committed inside this one):
+  - FastAPI+SQLite users service (`app/`)
+  - `manage.py migrate|status --db dev|prod` with `migrations/001_init.sql` and `002_add_email.sql` (the release 1.3 change)
+  - `tests/test_app.py`, where `test_health_is_fast` is **deliberately flaky** (a wall-clock bound no machine meets)
+  - `.github/workflows/ci.yml` with a "slow integration check" step
+  - **`deploy.sh`, a stub:** it prints "deployed vX to target (stub)" after 1s and never contacts anything
+- **`python demo_repo/setup_demo.py [--root .demo]` builds or resets the demo world** under `.demo/` (gitignored):
+  - `work/`: a git copy at "release 1.2.0", pushed to a local bare `origin.git`
+  - `work/data/dev.db` with 001+002 applied
+  - **`prod.db`, a disposable sqlite file, one migration behind**
+  - `kosha.demo.yaml` (dev local, prod shared; read via the new `KOSHA_CONFIG` env)
+  - a **fresh `kosha.db`** (raw-redaction mitigation a)
+  - `start_koshad.sh` (demo DB and config, `fs_guard` on `work/`, session `release-1.3`)
+  - `work/.bob/`:
+    - `mcp.json`: one kosha-mcp per fleet mode, `groups: [slug]`, `timeout: 300000`, env for config and prod DB
+    - `custom_modes.yaml`: fleet modes **`release-bump`**, **`test-fix`**, **`migrate-deploy`** with `groups: [read, mcp]` (no edit/execute/mode). Each `roleDefinition` has that mode's task plus the full gating protocol.
+    - `settings.json`: kosha-hook on native tools with the anchored matcher
+
+  It refuses to delete a directory it didn't create (marker file). **Run it right before recording.**
+- **Tests:** `tests/test_demo_repo.py` (22).
+  - The world is built correctly: git and origin, prod one behind, exactly the flaky test fails, the deploy stub is under 3s, reset safety, rebuild from scratch.
+  - The Bob config passes Bob's own rules (groups are slug-only, tool ids ≤64, mode schema, strict hook schema, the anchored matcher skips kosha tools), and **every MCP entry launches as configured**.
+  - **Every scenario step is priced as the story needs:**
+    - L2: VERSION, CHANGELOG and flaky-test edits; commit
+    - L4: CI edit; push; prod migration; deploy
+    - L3: dev migration
+    - L0: tests, prod read
+  - Full suite: 821 passed.
+- **Live smoke test of the generated `start_koshad.sh`** (port 8799): an approved `release-bump` edit to VERSION was kept and charged 2; a prod read was free; a native write to `app/main.py` was reverted, with `bypass_detected` on `/stream`; the fresh ledger held only this session.
+
+**fs_guard window 2 in the demo: theoretical.** Every gated demo command is short. Measured: `deploy.sh` 1.01s (the longest), pytest 0.69s, migrate 0.04s, git add/commit/push ≤0.02s. The fleet modes have no native tools, so no scripted agent can bypass anyway. **Constraint for task 11:** if the demo stages an fs_guard bypass beat, stage it when no gated command is running.
+
+**Constraints task 11 must honour:**
+1. Only obviously fake secret-like strings (e.g. `sk-fake-demo-...`), never anything real.
+2. Run `setup_demo.py` (a fresh ledger) immediately before recording.
+3. Never stage the bypass beat during a running command.
+4. **Account for the teammate's new target-convergence rule** (two or more agents acting on the same typed target in one window asks), alongside escalation.
+5. **The approval text says "Kosha dashboard", and `web/` doesn't exist yet.** Decide: build the minimal bundle view first, or approve via curl on camera.
+
+**Findings:**
+- **Pricing-track gap:** `bash deploy.sh prod` matches `opaque_script` (L3, local), while `./deploy.sh prod` matches `deploy_trigger` (L4). The same deploy wrapped in `bash` is under-priced. The demo uses the `deploy` tool (always L4), so it isn't affected.
+- **Untested live:** how the three modes run in parallel in Bob (three parallel tasks, one per mode, is the assumption). Bob's `spawn_subagent` uses presets, and I haven't verified whether a custom mode can be spawned as a subagent.
+
+## Next (task 11 onward), not started
+demo scenario → web/.
