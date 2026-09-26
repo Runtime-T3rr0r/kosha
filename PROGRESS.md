@@ -74,7 +74,7 @@ Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js
   - ask/deny return `is_error` with the reason and suggestion. For ask, it also tells the agent to retry the same call once a human approves.
   - Any exception inside the handler becomes an `is_error` result that says "nothing was run". Nothing surfaces as a success.
 - **Identity:** `resolve_agent_id()` as specified, defaulting to `per_mode_instance` (`--agent <mode slug>`). One tweak: inline mode falls back to the instance name instead of returning `None`.
-  - Pinning each instance to its mode with the MCP entry's `groups` field: see "Verification: groups, MCP timeout, hook fail-open" below. It's enforced at execution time in Bob's source, but not yet tested in a live IDE session, and it comes with caveats.
+  - Pinning each instance to its mode with the MCP entry's `groups` field: see "Verification: groups, MCP timeout, hook fail-open" below. Verified live: a mode is never offered another agent's kosha tools (see "Live group-isolation test"). The conditions it depends on are listed there.
 - `db_exec` supports sqlite aliases only (the demo's dev/prod). Relative sqlite paths resolve against the kosha repo root, and it never echoes a DB URL. `deploy` runs `KOSHA_DEPLOY_CMD` (default `./deploy.sh <target>`) in the workspace.
 - **Write leases:** on allow, `/decide` now records `expected_writes` in the *same* transaction. File tools lease their exact path for 30s; commands lease their cwd for 300s; `db_exec` leases nothing. Settle shrinks the lease to a 2s grace. The `expected_writes` key became `(path, action_id)`, so concurrent commands in one directory don't clobber each other's lease. `match_expected` treats a directory lease as covering everything under it.
   - **Known gap:** while a gated command runs, a native bypass write under the same cwd is indistinguishable from the command's own and gets accepted. Layers 1 and 2 (mode groups, kosha-hook) still stop it.
@@ -101,7 +101,7 @@ Repeat for each mode, giving every instance the same `--session`. `groups` must 
 
 **How this was verified, and its limits.** There is no `bob run` on this machine: the install is Bob IDE only (`bob` is the IDE launcher, and the only other binary is `bobide-tunnel`). Running a real two-mode agent session needs the GUI plus an interactive, model-backed session, so **(a) is verified from Bob's source, not live**. (c) is verified by **executing Bob's own hook-runner functions**, extracted verbatim from `bob-code/dist/extension.js` (Bob 1.126.0+bob2.2.0), against 34 real hook scripts under Node v26. Bob itself ships Electron 42. The runner uses `child_process.exec`, whose timeout, kill and maxBuffer behaviour is the same across those versions. No credentials were read; `~/.bob/settings/settings.json` holds only a migration flag.
 
-### (a) Does MCP `groups` restrict which mode can call an instance? Yes in the source, with caveats. Not yet tested live.
+### (a) Does MCP `groups` restrict which mode can call an instance? Yes. List filtering was verified live (see "Live group-isolation test" below). The execution-time check is source only.
 
 Code path:
 - MCP tool: `this.groups = yVt(serverConfig)`, which is `serverConfig.groups` if it's an array, else `["mcp"]`.
@@ -196,6 +196,34 @@ Harness used for (c): `bob_hooks_extracted.js` and `harness.js` in the session s
   - the installed console script fails closed
   - Full suite: 513 passed.
 - **Not installed in this repo's `.claude/settings.json`,** on purpose: it would gate this very session. The registration snippet is in the module docstring (anchored matcher, absolute path to the venv's `kosha-hook`, timeout 10).
+
+## 2026-09-26: Live group-isolation test in Bob IDE (both directions verified)
+
+**Setup** (`.bob/` in this repo; created for the test, not committed):
+- `.bob/mcp.json`: `kosha-sub1` and `kosha-sub2`, both `/home/claude/Repos/kosha/.venv/bin/kosha-mcp --agent subN --session grouptest --workspace /home/claude/Repos/kosha`, with `"groups": ["subN"]`, `alwaysAllow` for the six tools, and `timeout: 300000`.
+- `.bob/custom_modes.yaml`: modes `sub1` and `sub2`, each with `groups: [read, mcp]`. Bob adds the mode's own slug to its group set. No `mode`, `edit` or `execute` groups.
+- One `koshad` (`.venv/bin/koshad`, 127.0.0.1:8765). Before the test, both entries were launched with their exact command and args over MCP stdio, and both listed all six tools.
+
+**Results.** The verdict is koshad's `actions` table, not the agents' chat text: one agent first said it didn't have a tool it did have.
+
+| Mode | Tool called | Chat result | koshad record |
+|---|---|---|---|
+| sub1 | `mcp__kosha-sub1__run_command` (`echo baseline-sub1`) | `exit 0`, stdout `baseline-sub1` | `agent_id=sub1`, allow, confirmed |
+| sub2 | `mcp__kosha-sub2__run_command` (control; the text `echo cross-sub1-via-sub2` is a mislabel, it's sub2's own tool) | `exit 0`, stdout `cross-sub1-via-sub2` | `agent_id=sub2`, allow, confirmed |
+| sub2 | `mcp__kosha-sub1__run_command` | tool not in sub2's list, "not available" | **no request received** |
+| sub1 | `mcp__kosha-sub2__run_command` | tool not in sub1's list, "not available" | **no request received** |
+
+Both servers were proven to work inside Bob (rows 1–2), so both cross results (rows 3–4) are informative.
+
+**What this shows:** a mode is offered a server's tools only if the server's `groups` share a value with the mode's `groups` plus its slug (`getToolsForMode`). The tools are registered for every task and filtered per mode. With each kosha server's `groups` set to its mode's slug alone, a mode never sees another agent's kosha tools, so it can't spend another agent's budget through them.
+
+**Conditions it depends on.** These are configuration, not something Bob guarantees:
+- no `"mcp"` in any kosha server's `groups`;
+- no mode lists another mode's slug in its `groups`;
+- fleet modes lack the `mode` group, otherwise `switch_mode` lets an agent act as another agent (**not tested**);
+- the agent can't rewrite `.bob/mcp.json` or `.bob/custom_modes.yaml`. **Today it can**, via file tools; this is still open (proposed fix: price writes under `.bob/` as L5).
+
+**What this does NOT show:** Bob's source also has an execution-time check (`N2r`: "Tool X is not allowed to be executed. Swap to a mode that can use mcp tools."). An out-of-list call can't be issued from chat, so that check was not exercised live. It's present in source and not verified live.
 
 ## Next (task 8 onward), not started
 kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
