@@ -112,6 +112,8 @@ def family_sub(argv: list[str]) -> tuple[str, str | None]:
     if cmd in {"git", "kubectl", "helm", "terraform", "docker"}:
         if cmd == "kubectl" and args[:2] == ["create", "rolebinding"]:
             return "kubectl", "create_rolebinding"
+        if cmd == "git" and args == ["branch"]:
+            return "git", "branch_list"
         return cmd, first
     if cmd in {"psql", "mysql", "sqlite3"}:
         return "sql", sql_sub(argv)
