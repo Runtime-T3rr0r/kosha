@@ -17,7 +17,7 @@
 
 ## Flags / decisions a human should look at
 
-1. **Ownership gap: who maps Action → effects.yaml entry → (level, cell)?** Nothing does yet. `bench/check_effects_coverage.py` has an offline-only matcher, and `rubric.classify_action` needs the axes already resolved. My plan for task 5: `parser.py` does family/sub parsing *and* the effects.yaml match (read-only, no edits to the table), and resolvers fill in context subs (`tracked_clean`, `untracked`, `outside_workspace`, local/shared db). The Pricing track should confirm they're fine with the matcher living on the System side.
+1. ~~**Ownership gap**~~ resolved: the Pricing track pushed `kosha/pricing/match.py`, and task 5 builds on it (see below). Original note: **who maps Action → effects.yaml entry → (level, cell)?** Nothing does yet. `bench/check_effects_coverage.py` has an offline-only matcher, and `rubric.classify_action` needs the axes already resolved. My plan for task 5: `parser.py` does family/sub parsing *and* the effects.yaml match (read-only, no edits to the table), and resolvers fill in context subs (`tracked_clean`, `untracked`, `outside_workspace`, local/shared db). The Pricing track should confirm they're fine with the matcher living on the System side.
 2. **Approval → retry semantics (my design choice, spec was silent).** Adapters only call `/decide` and `/settle`, so an approved `ask` is consumed by the agent's *next identical* `/decide` (same session, agent, tool, argv, targets), which is then allowed and charged. It's single-use. `approve_reset` also zeroes the session window.
 3. **client.py catches slightly more than the PDF snippet:** it catches `requests.RequestException` plus `ValueError`/`TypeError` (a bad body), not just Timeout/ConnectionError/HTTPError. A 200 with garbage in it would otherwise raise instead of failing closed.
 4. **`IDENTITY_MODE` default:** the PDF says `"inline"`, the build prompt says `"per_mode_instance"`. Going with the prompt, since it's the later, source-verified finding.
@@ -30,5 +30,21 @@
 7. `pyproject.toml` (shared) got runtime deps (fastapi, uvicorn, requests, watchdog, bashlex, mcp) and a `[project.scripts]` block, additive only. Dev venv is at `.venv/` (gitignored).
 8. `/stream` takes `?last_id=` (resume) and `?once=true` (drain and close, used by the tests).
 
-## Next (task 5 onward), not started
-parser.py + resolvers.py → bob_mcp.py → claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
+## 2026-09-26: task 5 done
+
+Rebased onto the Pricing track's `d8d7c1e` (match.py, the single-agent L4 escalation threshold), no conflicts. Human confirmed: `per_mode_instance`, the stricter client, and approval-by-retry.
+
+- `kosha/system/parser.py`: splits the command with `bashlex` (which sees `&&`, pipes, `$(…)`, loop bodies and write redirects) and falls back to match.py's `shlex` splitter when bashlex can't parse it. It unwraps `sh -c '…'`, matches each segment via `kosha.pricing.match.match_command`, upgrades the context-dependent matches through the resolvers, and the most severe segment wins (level, then price). It also handles the `edit_file`/`write_file`/`db_exec`/`deploy`/`git` tools. If the raw command and argv disagree, both are priced and the worse one counts. Any exception falls back to the `unknown` entry.
+- `kosha/system/resolvers.py`: `is_tracked_clean`, `in_workspace` (plus `workspace_of`), `host_scope`, `db_scope`, `is_secret_var`. They're conservative when unsure: untracked, outside the workspace, shared, external.
+- `/decide` now uses the parser (the placeholder is gone).
+- `config/kosha.example.yaml`: committed template with placeholder values only. **Human: copy it to `config/kosha.yaml` and set the `prod` URL to a disposable DB.**
+- Tests: `tests/test_parser.py`, 61 tests against a real temp git repo. Full suite: 457 passed.
+
+**Flags:**
+- `is_secret_var` is built and tested but nothing calls it yet. match.py's own `SECRET_VAR` regex already covers `echo $TOKEN`.
+- The http "resolve local" handling lowers the *scope* on the matched entry (the effects note says localhost resolves local), because there's no `http_post_local` entry. With M1 prices, a localhost POST is L3/10 instead of L4/45.
+- `rm` of a path outside the workspace is raised to shared scope (L4). No effects entry exists for that, so it reuses the entry and bumps the scope, mirroring `file_write_outside_workspace`.
+- `tee FILE`, `cp`, `mv`, `sed -i` aren't file-write families in match.py, so they price as `unknown` (L4). That's conservative, but a benign `sed -i` on a tracked file will over-charge. It's a Pricing-track call whether to add entries.
+
+## Next (task 6 onward), not started
+bob_mcp.py → claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
