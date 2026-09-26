@@ -59,6 +59,23 @@ READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoW
                    # Bob
                    "read_file", "glob", "grep", "list_files", "office_read", "web_fetch",
                    "update_todo_list", "search_ibm_docs", "list_ibm_doc_libraries"}
+# Declared parameters per gated tool. Only these reach koshad as raw, so a model can't
+# smuggle a field policy reads (e.g. approval_token) into a native tool call.
+PARAMS = {
+    "Bash": {"command", "timeout", "description", "run_in_background"},
+    "Edit": {"file_path", "old_string", "new_string", "replace_all"},
+    "MultiEdit": {"file_path", "edits"},
+    "Write": {"file_path", "content"},
+    "NotebookEdit": {"notebook_path", "cell_id", "new_source", "cell_type", "edit_mode"},
+    "execute_command": {"command", "cwd", "timeout_seconds", "background"},
+    "write_file": {"path", "content", "line_count"},
+    "apply_diff": {"path", "diff"},
+    "insert_content": {"path", "line", "content"},
+    "search_and_replace": {"path", "search", "replace", "start_line", "end_line", "use_regex", "ignore_case"},
+    "office_edit": {"path", "operation", "query", "props", "before", "after", "index", "to", "from",
+                    "ops", "find", "replace"},
+}
+POLICY_ONLY_FIELDS = {"approval_token"}   # never accepted from an agent, even on unknown tools
 KOSHA_MCP_PREFIX = "mcp__kosha"   # kosha-mcp tools: already priced by kosha-mcp itself
 BOB_AGENT = "bob-native"
 POST_EVENTS = {"PostToolUse": "success", "PostToolUseFailure": "failure"}
@@ -124,6 +141,9 @@ def build_action(payload: dict):
         return None
     harness = harness_of(payload)
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    keep = PARAMS.get(name)
+    tool_input = {k: v for k, v in tool_input.items()
+                  if (k in keep if keep is not None else k not in POLICY_ONLY_FIELDS)}
     tool = (CLAUDE_TOOLS if harness == "claude_code" else BOB_TOOLS).get(name, "other")
     cwd = str(payload.get("cwd") or "")
     argv, targets = [], []

@@ -189,3 +189,17 @@ def test_console_script_is_installed_and_fails_closed(dead_koshad):
     script = os.path.join(os.path.dirname(sys.executable), "kosha-hook")
     code, out, err, _ = run_hook(payload(), argv=[script])
     assert_blocked(code, out, err, "failing closed")
+
+
+def test_only_declared_tool_params_reach_koshad(live_koshad):
+    run_hook(payload(tool_input={"command": "psql prod -c 'drop database app'",
+                                 "approval_token": "i-made-this-up", "description": "d"}))
+    [a] = rows(live_koshad, "SELECT raw, rule FROM actions")
+    assert json.loads(a["raw"]) == {"command": "psql prod -c 'drop database app'", "description": "d"}
+    assert a["rule"] == "hard_deny"
+
+
+def test_unknown_tools_still_drop_policy_only_fields(dead_koshad):
+    from kosha.adapters.claude_hook import build_action
+    a = build_action(payload(tool="SomeFutureTool", tool_input={"x": 1, "approval_token": "t"}))
+    assert a.raw == {"x": 1}

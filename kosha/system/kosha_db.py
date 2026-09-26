@@ -89,9 +89,12 @@ def iso(t: datetime) -> str:
 
 def fingerprint(action: Action) -> str:
     """Identity of 'the same action' across retries: an approved ask is consumed by the
-    next /decide with the same session, agent, tool, argv and targets."""
-    key = json.dumps([action.session_id, action.agent_id, action.tool,
-                      action.argv, sorted(action.targets)])
+    next /decide with the same session, agent, tool, argv, targets and raw tool input.
+    raw must be in it: for db_exec and file tools argv is empty and targets is only the
+    alias or path, so without raw an approval of one SQL statement or file body would let
+    any other through (and the approved path skips policy, hard deny included)."""
+    key = json.dumps([action.session_id, action.agent_id, action.tool, action.argv,
+                      sorted(action.targets), action.raw], sort_keys=True, default=str)
     return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -154,7 +157,7 @@ class KoshaDB:
 
     def _window_actions(self, c, session_id: str, window_start: str) -> list[sqlite3.Row]:
         return c.execute(
-            "SELECT action_id, agent_id, tool, argv, level, cell, price, status FROM actions "
+            "SELECT action_id, agent_id, tool, argv, raw, level, cell, price, status FROM actions "
             "WHERE session_id=? AND created_at>=? AND status IN ('reserved','confirmed') "
             "ORDER BY created_at", (session_id, window_start)).fetchall()
 
@@ -224,13 +227,15 @@ class KoshaDB:
                               (path, action.action_id, iso(t + timedelta(seconds=ttl))))
                 self._event(c, "action_reserved", action.session_id, summary)
             elif d.decision == "ask":
+                # raw is what the human is approving (the SQL, the file body): it has to be shown
                 bundle = [{"action_id": r["action_id"], "agent_id": r["agent_id"],
                            "tool": r["tool"], "argv": json.loads(r["argv"]),
-                           "level": r["level"], "cell": r["cell"], "price": r["price"],
-                           "status": r["status"]} for r in window]
+                           "raw": json.loads(r["raw"]), "level": r["level"], "cell": r["cell"],
+                           "price": r["price"], "status": r["status"]} for r in window]
                 bundle.append({"action_id": action.action_id, "agent_id": action.agent_id,
-                               "tool": action.tool, "argv": action.argv, "level": d.level,
-                               "cell": d.cell, "price": d.price, "status": "pending"})
+                               "tool": action.tool, "argv": action.argv, "raw": action.raw,
+                               "level": d.level, "cell": d.cell, "price": d.price,
+                               "status": "pending"})
                 cur = c.execute("INSERT INTO approvals(action_id,session_id,agent_id,fingerprint,"
                                 "bundle,status,created_at) VALUES (?,?,?,?,?,'pending',?)",
                                 (action.action_id, action.session_id, action.agent_id, fp,

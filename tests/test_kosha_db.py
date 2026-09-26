@@ -210,3 +210,37 @@ def test_budgets_default_to_the_price_table(tmp_path):
     d = KoshaDB(tmp_path / "t.db")
     assert (d.fleet_budget, d.agent_cap, d.window.total_seconds()) == \
         (t["fleet_budget"], t["agent_cap"], t["window_minutes"] * 60)
+
+
+# --- approvals cover exactly what the human saw ---
+
+def db_act(sql, agent="a1", tool="db_exec"):
+    return Action(action_id=uuid.uuid4().hex, session_id="s1", agent_id=agent, harness="bob",
+                  tool=tool, raw={"db": "prod", "sql": sql}, argv=[], cwd="/r", targets=["prod"],
+                  ts="2026-09-26T00:00:00Z")
+
+
+def test_approval_does_not_cover_different_raw_input(db):
+    # regression: fingerprint once ignored raw, so approving one SQL let any SQL through
+    assert db.decide(db_act("drop table audit_old"), 5, "*|*|priv", policy_decide).decision == "ask"
+    [ap] = db.pending_approvals()
+    db.resolve_approval(ap["id"], "approve_once")
+    other = db.decide(db_act("drop table users"), 5, "*|*|priv", policy_decide)
+    assert other.decision == "ask"                              # new approval needed
+    same = db.decide(db_act("drop table audit_old"), 5, "*|*|priv", policy_decide)
+    assert same.decision == "allow" and "approval" in same.reason
+
+
+def test_approved_retry_cannot_launder_a_hard_deny(db):
+    db.decide(db_act("drop table audit_old"), 5, "*|*|priv", policy_decide)
+    [ap] = db.pending_approvals()
+    db.resolve_approval(ap["id"], "approve_once")
+    d = db.decide(db_act("drop database prod_main"), 4, "irrev|shared|nopriv", policy_decide)
+    assert (d.decision, d.rule) == ("deny", "hard_deny")
+
+
+def test_bundle_shows_the_raw_input_being_approved(db):
+    assert db.decide(db_act("insert into audit values (1)"), 3, L3_CELL, policy_decide).decision == "allow"
+    db.decide(db_act("drop table users", agent="a2"), 5, "*|*|priv", policy_decide)
+    [ap] = db.pending_approvals()
+    assert [b["raw"]["sql"] for b in ap["bundle"]] == ["insert into audit values (1)", "drop table users"]

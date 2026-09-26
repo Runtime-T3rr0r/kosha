@@ -81,6 +81,7 @@ TOOLS = [
                input_schema=_schema({"target": "Environment name, e.g. staging or prod"}, ["target"])),
 ]
 TOOL_NAMES = {t.name for t in TOOLS}
+DECLARED = {t.name: set(t.input_schema["properties"]) for t in TOOLS}
 
 
 class Gateway:
@@ -107,9 +108,12 @@ class Gateway:
             targets = [str(args.get("db", ""))]
         elif name == "deploy":
             argv, targets = ["deploy", str(args.get("target", ""))], [str(args.get("target", ""))]
+        # Only declared arguments reach koshad: an agent must not be able to smuggle
+        # fields policy reads (e.g. approval_token) through a tool call.
+        raw = {k: v for k, v in args.items() if k in DECLARED.get(name, ())}
         return Action(action_id=uuid.uuid4().hex, session_id=self.session, agent_id=agent_id,
                       harness="bob", tool=name if name in TOOL_NAMES else "other",
-                      raw=dict(args), argv=argv, cwd=cwd, targets=targets,
+                      raw=raw, argv=argv, cwd=cwd, targets=targets,
                       ts=datetime.now(timezone.utc).isoformat())
 
     def execute(self, action: Action) -> tuple[bool, str]:
