@@ -152,21 +152,22 @@ def run(root: Path, out=print) -> list[str]:
         play(STORY)
 
         pending = {a["agent_id"]: a for a in _get(f"{url}/approvals")}
-        out(f"\n== human: GET /approvals -> {len(pending)} held")
-        mig = pending.get("migrate-deploy")
-        if mig:
-            out("   bundle behind the prod migration (what the fleet did this window):")
-            for e in mig["bundle"]:
-                what = e["argv"] or [e["raw"].get("path") or e["raw"].get("sql") or e["raw"].get("command")]
-                out(f"     {e['agent_id']:15} {e['tool']:11} L{e['level']} {e['status']:9} {' '.join(map(str, what))}")
-        push = pending.get("test-fix")
+        human_tab = gateways["migrate-deploy"]          # the human types into the held tab
+        out("\n== human, in the migrate-deploy tab: \"Show me what Kosha is holding.\" -> kosha_review")
+        out("\n".join("   " + ln for ln in human_tab.call("kosha_review", {"arguments": {}, "_meta": {}})[1].splitlines()))
+        mig, push = pending.get("migrate-deploy"), pending.get("test-fix")
         if not (mig and push):
             problems.append(f"expected held actions from migrate-deploy and test-fix, got {sorted(pending)}")
         else:
-            _post(f"{url}/approvals/{push['id']}", {"decision": "deny", "note": "release-bump already pushed main"})
-            out(f"== human: POST /approvals/{push['id']} deny   (duplicate push; release-bump already pushed main)")
-            _post(f"{url}/approvals/{mig['id']}", {"decision": "approve_reset"})
-            out(f"== human: POST /approvals/{mig['id']} approve_reset   (migration reviewed; window reset)\n")
+            for aid, decision, note in ((push["id"], "deny", "main was already pushed"),
+                                        (mig["id"], "approve_reset", None)):
+                args = {"approval_id": aid, "decision": decision, **({"note": note} if note else {})}
+                # in Bob, this call waits for the human to click Approve in Bob's own prompt
+                is_error, text = human_tab.call("kosha_approve", {"arguments": args, "_meta": {}})
+                out(f"== human confirms in Bob's prompt: kosha_approve #{aid} {decision} -> {text}")
+                if is_error:
+                    problems.append(f"kosha_approve #{aid} {decision} failed: {text}")
+            out("")
             play(AFTER_APPROVAL)
 
         time.sleep(1.0)                                  # let fs_guard see trailing events

@@ -81,6 +81,29 @@ TOOLS = [
     types.Tool(name="deploy", description="Deploy the workspace to a target environment." + GATING,
                input_schema=_schema({"target": "Environment name, e.g. staging or prod"}, ["target"])),
 ]
+ACTION_TOOLS = {t.name for t in TOOLS}
+
+# The approval queue, from inside Bob. kosha_review is read-only and auto-approved.
+# kosha_approve is NEVER in alwaysAllow: Bob shows its own Approve/Reject prompt before
+# every call, and only a human can click that, so an agent can ask but can't approve.
+# Neither is priced: reviewing or deciding isn't an action on the workspace.
+CONTROL_TOOLS = [
+    types.Tool(name="kosha_review",
+               description="Show what Kosha is holding for human approval: each held action and its "
+                           "bundle (everything the fleet did this window, in order). Read-only.",
+               input_schema={"type": "object", "properties": {}}),
+    types.Tool(name="kosha_approve",
+               description="Record the USER's decision on a held action. Only call this when the user "
+                           "explicitly tells you which held action to approve or deny and how. Bob asks "
+                           "the user to confirm before it runs. decision: approve_once (let the exact "
+                           "held call run once), approve_reset (same, and reset the fleet's window), or "
+                           "deny (with an optional note).",
+               input_schema={"type": "object", "required": ["approval_id", "decision"], "properties": {
+                   "approval_id": {"type": "integer", "description": "The # shown by kosha_review"},
+                   "decision": {"type": "string", "enum": ["approve_once", "approve_reset", "deny"]},
+                   "note": {"type": "string", "description": "Optional, e.g. why it was denied"}}}),
+]
+TOOLS = TOOLS + CONTROL_TOOLS
 TOOL_NAMES = {t.name for t in TOOLS}
 DECLARED = {t.name: set(t.input_schema["properties"]) for t in TOOLS}
 
@@ -148,6 +171,10 @@ class Gateway:
         if name not in TOOL_NAMES:
             return True, f"kosha-mcp: unknown tool {name}"
         args = raw_request.get("arguments") or {}
+        if name == "kosha_review":
+            return _review()
+        if name == "kosha_approve":
+            return _approve(args)
         action = self.build_action(name, args, resolve_agent_id(raw_request, self.agent))
         d = client.decide(action)
         if d.decision != "allow":
@@ -158,6 +185,53 @@ class Gateway:
             ok, out = False, f"{name} failed: {type(e).__name__}: {e}"
         client.settle(action.action_id, "success" if ok else "failure")
         return not ok, out
+
+
+def _what(entry: dict) -> str:
+    raw = entry.get("raw") or {}
+    return " ".join(map(str, entry.get("argv") or [raw.get("sql") or raw.get("path")
+                                                   or raw.get("command") or raw.get("args") or ""]))
+
+
+def _review() -> tuple[bool, str]:
+    try:
+        pending = client.approvals()
+    except Exception as e:
+        return True, f"Kosha is not responding ({type(e).__name__}); nothing to show."
+    if not pending:
+        return False, "Nothing is held for approval."
+    lines = []
+    for ap in pending:
+        held = ap["bundle"][-1]
+        lines.append(f"#{ap['id']}  HELD: {ap['agent_id']} {held['tool']} {_what(held)} (L{held['level']})")
+        lines.append("   this window, in order:")
+        for e in ap["bundle"]:
+            flag = "   <- held" if e["status"] == "pending" else ""
+            lines.append(f"     {e['agent_id']:15} L{e['level']}  {e['tool']:11} {_what(e)}{flag}")
+    return False, "\n".join(lines)
+
+
+def _approve(args: dict) -> tuple[bool, str]:
+    decision = args.get("decision")
+    if decision not in ("approve_once", "approve_reset", "deny"):
+        return True, "kosha_approve: decision must be approve_once, approve_reset or deny."
+    try:
+        approval_id = int(args.get("approval_id"))
+    except (TypeError, ValueError):
+        return True, "kosha_approve: approval_id must be the # number shown by kosha_review."
+    try:
+        r = client.resolve_approval(approval_id, decision, args.get("note"))
+    except Exception as e:
+        return True, f"Kosha is not responding ({type(e).__name__}); nothing was recorded."
+    if r.status_code == 404:
+        return True, f"No held action #{approval_id}. Call kosha_review to see what's held."
+    status = r.json().get("status")
+    if status != decision:
+        return True, f"#{approval_id} was already resolved ({status}); nothing changed."
+    if decision == "deny":
+        return False, f"Recorded: #{approval_id} denied. That call will not run."
+    return False, (f"Recorded: #{approval_id} {decision}. The held call can now be retried, "
+                   f"exactly as it was, once.")
 
 
 def _split(s: str) -> list[str]:

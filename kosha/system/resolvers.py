@@ -135,8 +135,9 @@ def is_secret_var(name: str) -> bool:
 # An agent runs as the same OS user as koshad, so nothing stops it from POSTing to the
 # approval endpoint, editing the ledger DB, or rewiring .bob/ and hook settings. Anything
 # that *changes* these is priced as privilege (L5, always held for a human). Pattern
-# based, so a determined agent can obfuscate around it; the tracked fixes are the approval
-# passphrase (Tier 2) and privilege separation (Tier 3).
+# based, so a determined agent can obfuscate around it. Humans approve through kosha-mcp's
+# kosha_approve tool, which Bob always asks the human to confirm; the real fix is privilege
+# separation (tracked as Tier 3).
 KOSHA_ROOT = Path(__file__).resolve().parents[2]
 CONTROL_FILE = re.compile(r"(^|/)kosha(\.demo)?\.(db|yaml)(-wal|-shm|-journal)?$")
 

@@ -122,6 +122,8 @@ def test_mcp_entries_are_pinned_one_per_mode(demo):
         assert args[args.index("--workspace") + 1] == str(demo["work"])
         assert os.access(e["command"], os.X_OK) and e["timeout"] >= 300000
         assert e["env"]["KOSHA_CONFIG"] == str(demo["config"])
+        assert "kosha_review" in e["alwaysAllow"]
+        assert "kosha_approve" not in e["alwaysAllow"]      # Bob must ask the human every time
         assert len(bob_tool_id(name, "run_command")) <= 64
 
 
@@ -131,6 +133,7 @@ def test_modes_are_valid_and_carry_the_gating_rules(demo):
     for m in modes:
         assert re.fullmatch(r"[a-zA-Z0-9-]+", m["slug"]) and m["name"]    # Bob's mode schema
         assert set(m["groups"]) == {"read", "mcp"}                         # no edit/execute/mode
+        assert "Never approve a held action on your own initiative" in m["roleDefinition"]
         role = m["roleDefinition"]
         assert f"mcp__kosha-{m['slug']}__run_command" in role
         for tag in ("KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED", "KOSHA UNAVAILABLE",
@@ -163,7 +166,8 @@ def test_every_mcp_entry_launches_as_configured(demo):
             return {t.name for t in (await c.list_tools()).tools}
 
     for e in servers.values():
-        assert asyncio.run(tools(e)) == {"run_command", "edit_file", "write_file", "git", "db_exec", "deploy"}
+        assert asyncio.run(tools(e)) == {"run_command", "edit_file", "write_file", "git", "db_exec", "deploy",
+                                         "kosha_review", "kosha_approve"}
 
 
 # --- the scenario's steps are priced as the story needs ---
