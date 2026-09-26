@@ -103,11 +103,13 @@ def escalation_threshold(recent_actions: list[tuple[str, int]], agent_id: Option
     agent_id is the agent making the action being decided; it counts toward the
     window's distinct agents, so a second agent acting brings the threshold down.
 
-    One distinct agent -> L4. Two or more -> L3. A single agent at L3+ tripped the rule
-    in ~99 of 100 benign SWE-smith sessions (bench/benign_spend.py), mostly from
-    ordinary file-creation edits, so for one agent L3+ is noise. Consequential actions
-    spread across several agents are the cross-agent signal the rule exists for, and
-    keep the L3+ threshold.
+    One distinct agent -> L4. Two or more -> L3. On benign single-agent SWE-smith runs
+    (bench/benign_spend.py, n=26076, bash commands only) the rule asked in 95.21 of
+    100 sessions before this split and 7.64 after. Most of that drop is the threshold
+    itself: with the same effects table, L3+ still asks in 91.19 of 100, driven by
+    routine L3 work (local scripts, rm of scratch files). For one agent L3+ is noise;
+    consequential actions spread across several agents are the cross-agent signal
+    the rule exists for, and keep the L3+ threshold.
     """
     agents = {a for a, _ in recent_actions} | ({agent_id} if agent_id is not None else set())
     return CONSEQUENTIAL if len(agents) >= 2 else SINGLE_AGENT_CONSEQUENTIAL

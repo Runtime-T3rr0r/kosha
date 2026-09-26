@@ -69,6 +69,34 @@ def test_flag_entry_wins_regardless_of_file_order():
     assert match_command(["git", "checkout", "--", "f"], effects[::-1])["id"] == "discard"
 
 
+def _entry(eid, flags, privilege, reversible=True, scope="local"):
+    return {"id": eid, "match": {"family": "chmod", "sub": None, "flags_any": flags},
+            "reversible": reversible, "scope": scope, "privilege": privilege, "read_only": False}
+
+
+@pytest.mark.parametrize("flip", [False, True])
+def test_privilege_entry_wins_tie_regardless_of_file_order(flip):
+    unknown = {"id": "unknown", "match": {"family": "unknown", "sub": None, "flags_any": []},
+               "reversible": False, "scope": "shared", "privilege": False, "read_only": False}
+    priv = _entry("chmod_777", ["777", "a+rwx", "o+w"], True, False, "shared")
+    exec_ = _entry("chmod_exec", ["+x", "u+x"], False)
+    pair = (exec_, priv) if flip else (priv, exec_)
+    effects = (unknown, *pair)
+    assert match_command(["chmod", "a+rwx", "+x", "f"], effects)["id"] == "chmod_777"
+    assert match_command(["chmod", "+x", "a+rwx", "f"], effects)["id"] == "chmod_777"
+    assert match_command(["chmod", "+x", "f"], effects)["id"] == "chmod_exec"
+
+
+@pytest.mark.parametrize("flip", [False, True])
+def test_equal_specificity_tie_goes_to_higher_level(flip):
+    unknown = {"id": "unknown", "match": {"family": "unknown", "sub": None, "flags_any": []},
+               "reversible": False, "scope": "shared", "privilege": False, "read_only": False}
+    low = _entry("low", ["-a"], False)                          # rev|local -> L2
+    high = _entry("high", ["-b"], False, reversible=False)      # irrev|local -> L3
+    effects = (unknown, *((high, low) if flip else (low, high)))
+    assert match_command(["chmod", "-a", "-b", "f"], effects)["id"] == "high"
+
+
 def test_result_shape_and_axes():
     r = match_command(["git", "checkout", "--", "app.py"])
     assert r == {"id": "git_checkout_discard", "family": "git", "sub": "checkout", "flags": ["--"],

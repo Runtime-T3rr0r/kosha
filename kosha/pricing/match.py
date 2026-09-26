@@ -5,10 +5,15 @@ state, db scope, host allowlists) are not consulted here, so context-dependent r
 take their conservative variant (e.g. rm -> rm_untracked, a redirect -> file_write
 untracked).
 
-Specificity: same family, sub equal (or entry sub null), flags satisfied; entries
-with a flags_any condition beat unconditional ones, entries with a sub beat sub-null
-ones. So `git checkout -- f` matches git_checkout_discard over git_checkout, and
-`kubectl rollout status` matches kubectl_rollout_status over kubectl_rollout.
+Candidates: same family, sub equal (or entry sub null), flags satisfied. Among them:
+  1. a privilege entry beats any non-privilege entry;
+  2. then specificity: a flags_any condition beats none, a sub beats sub-null, so
+     `git checkout -- f` matches git_checkout_discard over git_checkout and
+     `kubectl rollout status` matches kubectl_rollout_status over kubectl_rollout;
+  3. then the higher rubric level (conservative).
+File order in effects.yaml never decides between entries with different axes, so
+reordering the file cannot downgrade a match (e.g. `chmod a+rwx +x` is chmod_777,
+not chmod_exec, wherever the two entries sit).
 
 `xargs [opts] CMD ...` is matched as CMD. Local scripts run through an interpreter
 (python <file>, bash|sh <file>, npm run <script>) match the flat opaque_script
@@ -26,6 +31,8 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from kosha.pricing.rubric import classify
 
 EFFECTS = Path(__file__).resolve().parents[2] / "config" / "effects.yaml"
 
@@ -177,6 +184,13 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
     return "unknown", None
 
 
+def rank(entry: dict) -> tuple[bool, int, int]:
+    m = entry["match"]
+    specificity = (m["sub"] is not None) + 2 * bool(m["flags_any"])
+    level = 0 if entry["read_only"] else classify(entry["reversible"], entry["scope"], entry["privilege"])
+    return entry["privilege"], specificity, level
+
+
 def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -> dict:
     """Most specific effects entry for one argv.
 
@@ -190,7 +204,7 @@ def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -
         return match_command(xargs_command(argv), effects)
     family, sub = family_sub(argv) if argv else ("unknown", None)
     tokens = set(argv[1:])
-    best, best_score = None, -1
+    best = None
     if family != "unknown":
         for e in effects:
             m = e["match"]
@@ -198,9 +212,8 @@ def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -
                 continue
             if m["flags_any"] and not tokens & set(m["flags_any"]):
                 continue
-            score = (m["sub"] is not None) + 2 * bool(m["flags_any"])
-            if score > best_score:
-                best, best_score = e, score
+            if best is None or rank(e) > rank(best):
+                best = e
     matched = best is not None
     if not matched:
         best = next(e for e in effects if e["id"] == "unknown")
