@@ -208,3 +208,12 @@ def test_roles_tell_agents_reads_are_free_and_not_to_ration(demo):
         role = m["roleDefinition"]
         assert "Read-only steps" in role and "are free" in role
         assert "Do not ration, skip or refuse normal work" in role
+
+
+def test_agents_workspace_has_no_demo_tooling(demo):
+    # the run sheet (with expected Kosha outcomes) must never be readable by the agents
+    work_files = {p.name for p in demo["work"].rglob("*") if ".git" not in p.parts}
+    for leaked in ("DEMO.md", "rehearse.py", "show_bundle.py", "setup_demo.py"):
+        assert leaked not in work_files
+    tracked = subprocess.run(["git", "ls-files"], cwd=demo["work"], capture_output=True, text=True).stdout
+    assert "DEMO.md" not in tracked and "rehearse.py" not in tracked

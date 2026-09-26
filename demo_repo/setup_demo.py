@@ -38,7 +38,9 @@ KOSHA = TEMPLATE.parent
 VENV_BIN = Path(sys.executable).parent
 MARKER = ".kosha_demo_root"
 SESSION = "release-1.3"
-TEMPLATE_SKIP = {"setup_demo.py", "__pycache__", "data", ".bob"}
+# demo tooling stays out of the agents' workspace: DEMO.md holds the expected outcomes
+TEMPLATE_SKIP = {"setup_demo.py", "rehearse.py", "show_bundle.py", "DEMO.md", "__pycache__",
+                 "data", ".bob"}
 
 # slug -> the part of "prepare release 1.3" this agent (one Bob task in this mode) owns
 FLEET = {
