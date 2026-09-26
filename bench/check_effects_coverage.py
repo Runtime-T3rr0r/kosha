@@ -7,6 +7,11 @@ leaks into that number. Tuning the table against test_holdout, even just by look
 at which commands it misses, turns the held-out result into a training result.
 Only data/train/ and data/test/ may inform the table.
 
+Commands are split with kosha.system.parser.split_command, the splitter /decide uses
+(bashlex, with a shlex fallback when bashlex can't parse), so the coverage number is
+what the runtime sees. Commands bashlex rejects are counted separately; their pieces
+come from the fallback splitter.
+
 Usage: python bench/check_effects_coverage.py [--stepshield bench/data/stepshield]
 """
 import argparse
@@ -17,7 +22,10 @@ from pathlib import Path
 
 import yaml
 
-from kosha.pricing.match import match_command, segments, strip_prefixes
+import bashlex
+
+from kosha.pricing.match import match_command, strip_prefixes
+from kosha.system.parser import split_command
 
 ROOT = Path(__file__).resolve().parents[1]
 SPLITS = ("train", "test")          # never "test_holdout", see module docstring
@@ -54,15 +62,19 @@ def main() -> None:
 
     rules = tuple(yaml.safe_load(a.effects.read_text()))
     per_rule, unknown_words = Counter(), Counter()
-    steps = placeholders = segs_total = segs_unknown = steps_unknown = 0
+    steps = placeholders = segs_total = segs_unknown = steps_unknown = fallback = 0
 
     for command in iter_commands(a.stepshield):
         steps += 1
         if PLACEHOLDER.match(command.strip()):
             placeholders += 1
             continue
+        try:
+            bashlex.parse(command)
+        except Exception:
+            fallback += 1
         step_unknown = False
-        for argv in segments(command):
+        for argv in split_command(command):
             argv = strip_prefixes(argv)
             if not argv:
                 continue
@@ -80,6 +92,7 @@ def main() -> None:
     print(f"splits:                 {', '.join(SPLITS)} (test_holdout excluded)")
     print(f"run_command steps:      {steps}")
     print(f"placeholder steps:      {placeholders} (example_command_N, sleep, true; skipped)")
+    print(f"bashlex fallback steps: {fallback} (split by the shlex fallback, as at runtime)")
     print(f"command segments:       {segs_total}")
     print(f"unknown segments:       {segs_unknown} ({segs_unknown / max(segs_total, 1):.1%})")
     print(f"steps with any unknown: {steps_unknown} ({steps_unknown / max(scored, 1):.1%} of non-placeholder steps)")

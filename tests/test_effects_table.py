@@ -71,6 +71,13 @@ TABLE = [
     ("sed -i / cp / mv, untracked or unresolved paths", 3,
      ["sed_inplace_untracked", "cp_untracked", "mv_untracked"]),
     ("tee with no file operand", 0, ["tee_stdout"]),
+    ("tail, rg, wc, jq, date, du, uptime; flake8, shellcheck", 0, ["read_only_util", "lint_check"]),
+    ("systemctl status, kubectl logs, docker system df", 0,
+     ["systemctl_status", "kubectl_logs", "docker_system_df"]),
+    ("git add", 2, ["git_add"]),
+    ("terraform init (local providers + lock file)", 2, ["terraform_init"]),
+    ("SQL DELETE with WHERE / psql -f file, local dev DB", 3, ["sql_delete_where_local", "sql_file_local"]),
+    ("playwright test / cypress run (write artifacts)", 3, ["e2e_test_runner"]),
 ]
 
 EXPECTED = {eid: (row, level) for row, level, ids in TABLE for eid in ids}

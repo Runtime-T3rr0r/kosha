@@ -63,6 +63,36 @@ def mid(cmd: str) -> str:
     ("tee /dev/null", "tee_stdout"),
     ("make", "opaque_script"),
     ("make test", "opaque_script"),
+    ("npm test", "opaque_script"),
+    ("npm test --silent -- --testPathPattern=auth", "opaque_script"),
+    ("npm t", "opaque_script"),
+    ("yarn test", "opaque_script"),
+    ("pnpm test", "opaque_script"),
+    ("pytest", "pytest"),
+    ("npx playwright test e2e/checkout.spec.ts", "e2e_test_runner"),
+    ("npx -y cypress run --spec a.cy.ts", "e2e_test_runner"),
+    ("flake8 src/auth", "lint_check"),
+    ("shellcheck scripts/cleanup.sh", "lint_check"),
+    ("tail -n 20 migrate.log", "read_only_util"),
+    ("tail -f app.log", "read_only_util"),
+    ("rg -n webhook services/payments", "read_only_util"),
+    ("wc -l data.csv", "read_only_util"),
+    ("jq .version package.json", "read_only_util"),
+    ("jq -f filter.jq data.json", "read_only_util"),
+    ("date +%Y-%m-%d", "read_only_util"),
+    ("du -sh logs/", "read_only_util"),
+    ("uptime", "read_only_util"),
+    ("git add src/auth.js", "git_add"),
+    ("systemctl status app.service", "systemctl_status"),
+    ("systemctl enable app.service", "systemctl_enable"),
+    ("kubectl logs -l app=api", "kubectl_logs"),
+    ("docker system df", "docker_system_df"),
+    ("terraform init", "terraform_init"),
+    ("psql -d app_db -f migrations/001.sql", "sql_file_local"),
+    ("psql --file=seed.sql", "sql_file_local"),
+    ("psql -d production -f migrations/001.sql", "sql_write_shared"),
+    ("psql -c DELETE FROM users WHERE id = 1", "sql_delete_where_local"),
+    ("psql -c DELETE FROM users", "sql_delete_no_where_local"),
 ])
 def test_specificity(cmd, expected):
     assert mid(cmd) == expected
@@ -119,8 +149,11 @@ def test_result_shape_and_axes():
 
 
 @pytest.mark.parametrize("argv", [["python", "-c", "print(1)"], ["bash", "-c", "ls"], ["npm", "run"],
-                                  ["python"], ["tail", "-f", "log"], [],
-                                  ["sed", "-n", "1,5p", "app.py"], ["sed", "-e", "s/a/b/", "app.py"]])
+                                  ["python"], ["kill", "1234"], [],
+                                  ["sed", "-n", "1,5p", "app.py"], ["sed", "-e", "s/a/b/", "app.py"],
+                                  ["date", "-s", "2020-01-01"], ["date", "--set=2020-01-01"],
+                                  ["rg", "--pre", "./run.sh", "x"], ["docker", "system", "prune"],
+                                  ["npx", "prisma", "migrate", "dev"], ["npx"]])
 def test_unmatched_falls_back_to_unknown(argv):
     r = match_command(argv)
     assert (r["id"], r["matched"], r["opaque_script"]) == ("unknown", False, False)
@@ -208,3 +241,24 @@ def test_segments_split_operators_and_redirects():
     assert segments("python x.py > out.txt") == [["python", "x.py"], ["__redirect__", "out.txt"]]
     assert segments("python x.py > /dev/null") == [["python", "x.py"]]
     assert match_command(["__redirect__", "out.txt"])["id"] == "file_write_untracked"
+
+
+@pytest.mark.parametrize("cmd", [
+    "kubectl -n prod get pods",
+    "kubectl --namespace prod get pods",
+    "kubectl --namespace=prod get pods",
+    "kubectl --context staging -n prod get pods",
+])
+def test_kubectl_global_options_are_skipped_to_find_the_subcommand(cmd):
+    assert mid(cmd) == mid("kubectl get pods") == "kubectl_get"
+
+
+def test_kubectl_namespace_before_mutating_subcommands():
+    assert mid("kubectl -n web rollout status deploy/web") == "kubectl_rollout_status"
+    assert mid("kubectl -n web rollout restart deploy/web") == "kubectl_rollout"
+    assert mid("kubectl -n auth create rolebinding x") == "kubectl_create_rolebinding"
+    assert mid("kubectl -n auth delete pod x") == "kubectl_delete"
+
+
+def test_sudo_through_npx_keeps_privilege():
+    assert match_command("sudo npx playwright test".split())["privilege"] is True

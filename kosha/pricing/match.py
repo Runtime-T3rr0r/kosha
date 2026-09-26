@@ -15,8 +15,9 @@ File order in effects.yaml never decides between entries with different axes, so
 reordering the file cannot downgrade a match (e.g. `chmod a+rwx +x` is chmod_777,
 not chmod_exec, wherever the two entries sit).
 
-`xargs [opts] CMD ...` is matched as CMD. Local scripts run through an interpreter
-(python <file>, bash|sh <file>, npm run <script>) and `make` match the flat
+`xargs [opts] CMD ...` and `npx [opts] CMD ...` are matched as CMD. Local scripts
+run through an interpreter (python <file>, bash|sh <file>, npm run <script>), `make`,
+and `npm|yarn|pnpm test` (a package.json script, so just as opaque) match the flat
 opaque_script fallback and carry opaque_script=True, so callers can count how often
 it fires.
 
@@ -56,6 +57,15 @@ SECRET_VAR = re.compile(r"\$\{?\w*(key|token|secret|passw|credential)\w*", re.I)
 SHARED_NAME = re.compile(r"(?<![a-z0-9])(?:prod(?:uction)?|staging)\d*(?![a-z0-9])", re.I)
 PROD_NAME = re.compile(r"(?<![a-z0-9])prod(?:uction)?\d*(?![a-z0-9])", re.I)
 SED_ARG_OPTS = {"-e", "-f", "-l", "--expression", "--file", "--line-length"}
+READ_UTILS = {"tail", "rg", "wc", "jq", "date", "du", "uptime"}
+# flags that make a read-only utility do something else: date -s sets the clock,
+# rg --pre runs a command on every file. With one of these the command stays unknown.
+READ_UTIL_UNSAFE = {"date": ("-s", "--set"), "rg": ("--pre",)}
+LINTERS = {"flake8", "shellcheck"}
+PKG_RUNNERS = {"npm", "yarn", "pnpm"}
+KUBECTL_OPTS_WITH_VALUE = {"-n", "--namespace", "--context", "--kubeconfig", "--cluster",
+                           "--user", "-s", "--server"}
+NPX_OPTS_WITH_VALUE = {"-p", "--package", "-c", "--call"}
 
 
 @lru_cache(maxsize=None)
@@ -119,8 +129,13 @@ def sql_sub(argv: list[str]) -> Optional[str]:
     if verb == "update":
         return "update_where" if " where " in f" {sql} " else None
     if verb == "delete":
-        return None if " where " in f" {sql} " else "delete_no_where"
+        return "delete_where" if " where " in f" {sql} " else "delete_no_where"
     return verb if verb in {"insert", "drop", "truncate"} else None
+
+
+def sql_file(argv: list[str]) -> bool:
+    """psql -f FILE / --file=FILE (mysql reads files via redirect, not a flag)."""
+    return any(a in {"-f", "--file"} or a.startswith("--file=") for a in argv[1:])
 
 
 def script_arg(args: list[str]) -> Optional[str]:
@@ -224,6 +239,23 @@ def write_paths(argv: list[str]) -> list[str]:
     return []
 
 
+def kubectl_args(args: list[str]) -> list[str]:
+    """kubectl args with global options before the subcommand removed, so
+    `kubectl -n ns get pods` reads as `get pods`."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in KUBECTL_OPTS_WITH_VALUE else 1
+    return args[i:]
+
+
+def npx_command(argv: list[str]) -> list[str]:
+    """The command npx runs, with npx and its options stripped ([] if none)."""
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        i += 2 if argv[i] in NPX_OPTS_WITH_VALUE else 1
+    return argv[i:]
+
+
 def xargs_command(argv: list[str]) -> list[str]:
     """The command xargs runs, with xargs and its options stripped ([] if none)."""
     i = 1
@@ -248,6 +280,16 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "fs_read", cmd
     if cmd in SHELL_READ:
         return "shell", cmd
+    if cmd in READ_UTILS:
+        unsafe = READ_UTIL_UNSAFE.get(cmd, ())
+        if any(a in unsafe or a.startswith(tuple(f"{u}=" for u in unsafe if u.startswith("--")))
+               for a in args):
+            return "unknown", None
+        return "read_util", cmd
+    if cmd in LINTERS:
+        return "lint", cmd
+    if (cmd == "playwright" and first == "test") or (cmd == "cypress" and first == "run"):
+        return "test", "e2e"
     if cmd == "xargs":
         return "shell", "xargs"
     if cmd == "pytest" or (cmd.startswith("python") and args[:2] == ["-m", "pytest"]):
@@ -256,13 +298,18 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "mkdir", None
     if cmd == "rm":
         return "rm", "untracked"
-    if cmd in {"git", "kubectl", "helm", "terraform", "docker"}:
-        if cmd == "kubectl" and args[:2] == ["create", "rolebinding"]:
+    if cmd == "kubectl":
+        rest = kubectl_args(args)
+        if rest[:2] == ["create", "rolebinding"]:
             return "kubectl", "create_rolebinding"
+        return "kubectl", rest[0] if rest else None
+    if cmd in {"git", "helm", "terraform", "docker"}:
         if cmd == "git" and args == ["branch"]:
             return "git", "branch_list"
         return cmd, first
     if cmd in {"psql", "mysql", "sqlite3"}:
+        if sql_file(argv):
+            return "sql", "write_shared" if SHARED_NAME.search(text) else "file"
         return "sql", sql_sub(argv)
     if cmd == "npm" and first in {"install", "i", "ci"}:
         return "pkg", "npm_install"
@@ -302,6 +349,8 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "script", "opaque"
     if cmd == "npm" and first == "run" and len(args) > 1:
         return "script", "opaque"
+    if cmd in PKG_RUNNERS and first in {"test", "t"}:
+        return "script", "opaque"
     return "unknown", None
 
 
@@ -322,9 +371,10 @@ def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -
     effects = effects if effects is not None else load_effects()
     sudo = has_sudo(list(argv))
     argv = strip_prefixes(list(argv))
-    if argv and Path(argv[0]).name == "xargs" and xargs_command(argv):
-        r = match_command(xargs_command(argv), effects)
-        return {**r, "privilege": r["privilege"] or sudo}
+    for name, inner in (("xargs", xargs_command), ("npx", npx_command)):
+        if argv and Path(argv[0]).name == name and inner(argv):
+            r = match_command(inner(argv), effects)
+            return {**r, "privilege": r["privilege"] or sudo}
     family, sub = family_sub(argv) if argv else ("unknown", None)
     tokens = set(argv[1:])
     best = None

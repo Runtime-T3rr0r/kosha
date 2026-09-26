@@ -132,6 +132,41 @@
   privilege: false
   read_only: true
   note: "pytest or python -m pytest; runs repo test code, treated as read-only"
+- id: read_only_util
+  match: {family: read_util, sub: null, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "tail, rg, wc, jq, date, du, uptime; date -s/--set and rg --pre stay unknown. jq has no in-place flag (jq -f reads a filter file); jq > file adds a file_write segment"
+- id: lint_check
+  match: {family: lint, sub: null, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "flake8, shellcheck: static checks that only report"
+- id: systemctl_status
+  match: {family: systemctl, sub: status, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "read-only; distinct sub from systemctl_enable"
+- id: kubectl_logs
+  match: {family: kubectl, sub: logs, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "read-only cluster query"
+- id: docker_system_df
+  match: {family: docker, sub: system, flags_any: ["df"]}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "disk usage report; docker system prune has no entry and stays unknown"
 
 # --- file edits / writes ---
 - id: file_write_tracked_clean
@@ -310,6 +345,13 @@
   privilege: false
   read_only: false
   note: "switch branches (git checkout <branch>); switching back restores state"
+- id: git_add
+  match: {family: git, sub: add, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "stages changes in the index; git restore --staged undoes it"
 
 # --- git remote ---
 - id: git_push
@@ -370,6 +412,20 @@
   privilege: false
   read_only: false
   note: "local dev DB, DELETE without WHERE"
+- id: sql_delete_where_local
+  match: {family: sql, sub: delete_where, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "local dev DB, DELETE with WHERE"
+- id: sql_file_local
+  match: {family: sql, sub: file, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "psql -f FILE: statements hidden in the file, charged like an opaque script; a prod/staging name matches sql_write_shared, a configured shared DB resolves to it too"
 - id: sql_write_shared
   match: {family: sql, sub: write_shared, flags_any: []}
   reversible: false
@@ -409,6 +465,13 @@
   privilege: false
   read_only: false
   note: "local dependency install"
+- id: terraform_init
+  match: {family: terraform, sub: init, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "downloads providers/modules into .terraform/ and writes the lock file; local like a dependency install, touches no infra"
 - id: npm_publish
   match: {family: pkg, sub: npm_publish, flags_any: []}
   reversible: false
@@ -640,10 +703,19 @@
   read_only: false
   note: "grants cluster access"
 
+# --- test runners that write artifacts ---
+- id: e2e_test_runner
+  match: {family: test, sub: e2e, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "playwright test / cypress run (also via npx): write screenshots, videos, test-results/"
+
 # --- opaque scripts ---
-# Flat fallback for python <file>, bash|sh <file>, npm run <script>, make: effects are hidden
-# inside the script, so it is charged a fixed irrev|local cell. Scanning short scripts
-# (< ~300 lines) for their real effects is not built yet.
+# Flat fallback for python <file>, bash|sh <file>, npm run <script>, npm|yarn|pnpm test,
+# make: effects are hidden inside the script, so it is charged a fixed irrev|local
+# cell. Scanning short scripts (< ~300 lines) for their real effects is not built yet.
 - id: opaque_script
   match: {family: script, sub: opaque, flags_any: []}
   reversible: false
