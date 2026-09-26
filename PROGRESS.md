@@ -482,5 +482,25 @@ Full suite: 760 passed.
 - **Tests:** `tests/test_demo_scenario.py` runs the full rehearsal and asserts the key beats (convergence hold, escalation hold, deploy allowed), and checks `show_bundle.py` on real approval output. **If a pricing change breaks a demo beat, the suite fails.** Full suite: 855 passed.
 - **Not verified:** the Bob-driven run of this exact script. Agents may take the steps in a different order or add steps. DEMO.md orders the sends to keep the shape, and the held beats don't depend on which of the two pushers goes second.
 
+## TRACKING: agent self-approval, and how humans approve (opened 2026-09-27)
+
+**The hole (found while designing human approval; applies to every harness):** agents' commands run as the same OS user as koshad, and koshad has no guard on its own control plane. So an agent can approve its own held action:
+- `curl -X POST localhost:8765/approvals/<id> -d '{"decision":"approve_once"}'` via `run_command` prices as a localhost POST (L3) and is **allowed**;
+- `sqlite3 <ledger>.db "update approvals set status='approve_once'"` prices as a local SQL write (L3) and is **allowed**;
+- editing `.bob/mcp.json`, the mode files, or hook settings rewires identity or removes the hook.
+
+A well-meaning agent told "this needs approval in Kosha" might try exactly this.
+
+| Tier | What | Status |
+|---|---|---|
+| **1. Detect** | Any command, file write or DB call touching Kosha's control plane (koshad address/port, the ledger DB file, `.bob/`, `.claude/settings*`, Kosha config) is priced as privilege, so **L5 and always held**. Pattern-based, so beatable by obfuscation (scripts, base64, env-var URLs). | **in progress** |
+| **2. Authenticate** | koshad asks the human for an approval passphrase at startup (interactive terminal only), keeps it only in memory (never on disk, never returned by an endpoint), and requires it on `POST /approvals/{id}`. `/decide` and `/settle` stay open for the adapters. Residual: a direct ledger DB write (Tier 1 catches the plain forms); a deliberately malicious agent could replace koshad (out of scope for a guardrail); same-user memory reads if `ptrace_scope` is 0. | **in progress** |
+| **3. Separate privileges** | Agents' commands execute as a separate OS user or in a container; koshad, the ledger and the approval socket are owned by the human user (Unix-socket permissions). Self-approval becomes impossible by OS permissions, not pattern matching. This turns Kosha into a sandbox, which v1 deliberately isn't. | **roadmap: say it in the pitch** |
+
+**How humans approve, per harness:**
+- **Claude Code:** proposed. `kosha-hook` returns `permissionDecision: "ask"`, so Claude Code's native prompt asks the human, only in `default`/`acceptEdits`/`plan` modes (bypass and unknown modes keep block-and-retry). koshad marks a held action "approved in harness" when PostToolUse arrives, and closes it with no charge on PostToolUseFailure. Known gap: a human reject in the prompt fires no hook, so the entry stays pending. **Not started; after Tiers 1–2.**
+- **Bob:** proposed. A small `/ui` approval page served by koshad (plain HTML/JS, existing endpoints only), opened inside Bob with **Simple Browser: Show**. Shows held actions, bundles and spend; Approve once / Approve & reset / Deny. This reverses the earlier "curl on camera, final" decision, at the human's request; curl stays as the fallback. Optional follow-up: the deferred wait-vs-bounce choice, i.e. kosha-mcp waits for the approval instead of asking the agent to retry. **Not started.**
+- **OpenCode:** never built (the stretch goal, last in the cut order).
+
 ## Next (task 11 onward), not started
 web/ (dashboard; approvals stay curl for the demo).
