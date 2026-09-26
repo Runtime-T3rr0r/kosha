@@ -260,5 +260,28 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
   Caveat: this exercises the matcher on single commands. Bob splits compound commands first (tree-sitter), and that splitting wasn't exercised, so whether it looks inside `bash -c` strings is unknown.
 - **Not done:** I haven't written `deniedCommands` into `~/.bob/settings/settings.json`. It's global and would change all Bob usage on this machine, so it goes with the demo config in task 10 unless you want it now.
 
+## 2026-09-26: Integration decisions locked (before task 9)
+
+**Known limitations in v1. Name these openly in the pitch deck:**
+- **Native-tool calls are priced, but attributed to a shared pool, not per-agent.** Bob's native tools (`execute_command`, `write_file`, `apply_diff`, ...) are gated by kosha-hook and charged to one pooled identity, `bob-native`, because Bob's hook payload carries no agent identity. Fleet budget and escalation count them; per-agent caps can't separate subagents that use native tools. Per-agent precision holds only for calls made through kosha-mcp (one instance per mode, `groups`-pinned, verified live above). The demo modes remove native tools (layer 1), so in the demo `bob-native` should see no calls at all.
+- **Future work: agent-visible budget query.** Agents can't ask Kosha about their remaining budget or the price of an action before trying it. There is deliberately no `kosha_status`/`kosha_quote` tool; adapters call only `/decide` and `/settle`. Revisit only if the task 11 demo shows it's needed.
+
+**Decisions:**
+1. **No agent-visible query tool.** Already true, and nothing contradicts it: kosha-mcp exposes exactly `run_command`, `edit_file`, `write_file`, `git`, `db_exec`, `deploy`, and adapters call only `/decide` and `/settle`.
+2. **Native Bob tools stay priced and pooled under `bob-native`; no deny-all.** Already true since task 8, and nothing contradicts it. The only per-agent claims in code and docs are about kosha-mcp calls.
+3. **Agents are told the gating rules.** Applied. **Finding: Bob never forwards an MCP server's `instructions` to the model.** Its MCP client stores them and nothing calls `getInstructions()`, so kosha-mcp's gating text had never reached a Bob agent. The rules now travel on the channels Bob actually shows:
+   - **Every kosha-mcp tool description** ends with the gating rule (tested).
+   - **Every block result** uses one shared format, `client.block_text()`, in both kosha-mcp results and kosha-hook stderr:
+     - line 1 names the outcome: `KOSHA HELD FOR HUMAN APPROVAL: nothing was run.` / `KOSHA DENIED: nothing was run, and retrying the same call will be denied again.` / `KOSHA UNAVAILABLE: nothing was run (Kosha could not decide, so it failed closed).`
+     - line 2 is kosha's reason and suggestion
+     - line 3 is the next step: for held, stop, tell the user, and **retry this exact call once they say it's approved**; for denied, re-plan; for unavailable, tell the user and retry once Kosha is back
+     - every variant says "do not work around it"
+   - **Mode `roleDefinition`** (test modes in the local `.bob/custom_modes.yaml`; task 10 carries the same text into `demo_repo/.bob/`): the fleet context, the tool names, and one rule per status tag, including "retry the exact same call after the user says it's approved", plus "never report a held, denied or unavailable step as done".
+   - This describes the **current** approval-by-retry behaviour. It does not decide wait-vs-bounce or how much fleet context goes in the message; both are still deferred until a real 3-subagent run.
+
+**Demo risks found while checking #3:**
+- **The approval text says "approved in the Kosha dashboard", and `web/` doesn't exist yet (task 12).** Until it does, a human approves with `curl -X POST localhost:8765/approvals/<id> -H 'content-type: application/json' -d '{"decision":"approve_once"}'` (ids from `GET /approvals`). **If the demo is recorded before `web/` exists, either build the minimal bundle view first or change that phrase.**
+- **Pricing-track text** (not mine, not touched): the hard-deny suggestion says "attach an approval token from a human", but no token mechanism exists, so an agent may invent one. The L5 suggestion ("use a variant ... e.g. chmod 644") is fine re-planning, but it slightly competes with "retry the exact call".
+
 ## Next (task 9 onward), not started
 fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
