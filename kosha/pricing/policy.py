@@ -1,7 +1,7 @@
 """Policy: turn one classified, priced action plus fleet ledger state into allow | ask | deny.
 
 Branch order (first match wins):
-  hard_deny -> l5 -> destructive_sql -> escalation -> fleet_budget -> agent_cap -> ok
+  hard_deny -> l5 -> destructive_sql -> convergence -> escalation -> fleet_budget -> agent_cap -> ok
 
 Deterministic by design. Classification lives in rubric.py, pricing in pricing.py;
 this module only applies the rules. Every ask/deny carries a reason and a
@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
+from kosha.pricing.convergence import MIN_LEVEL as TOUCH_LEVEL
+from kosha.pricing.convergence import Touch, converges, targets_of
 from kosha.pricing.match import PROD_NAME
 from kosha.pricing.pricing import price as cell_price
 from kosha.pricing.rubric import LEVEL_NAMES
@@ -44,7 +46,7 @@ class Decision:
     price: float
     fleet_after: float
     agent_after: float
-    rule: str              # "ok" | "hard_deny" | "l5" | "destructive_sql" | "escalation" |
+    rule: str              # "ok" | "hard_deny" | "l5" | "destructive_sql" | "convergence" | "escalation" |
                            # "fleet_budget" | "agent_cap" | "fail_closed" (adapters/client.py)
     suggestion: Optional[str] = None
 
@@ -57,12 +59,18 @@ class LedgerState:
 
     recent_actions: (agent_id, level) for actions already reserved/confirmed in the
     current window, excluding the action being decided.
+    window_touches: typed targets (convergence.touch) of the window's actions that were
+    decided allow OR ask, pending ones included, in decision order, excluding the action
+    being decided. An asked action counts as soon as it is asked, not once approved or
+    confirmed: waiting for confirmation hid 18 of 40 engineered convergences in
+    bench/convergence_synth.py.
     """
     fleet_spent: float
     fleet_budget: float
     agent_spent: float     # spend of the agent making this action
     agent_cap: float
     recent_actions: list[tuple[str, int]] = field(default_factory=list)
+    window_touches: list[Touch] = field(default_factory=list)
 
 
 # --- hard-deny patterns ---
@@ -198,6 +206,17 @@ def escalation_asks(recent_actions: list[tuple[str, int]], agent_id: str, level:
             and escalation_triggered(recent_actions, agent_id))
 
 
+# --- target convergence ---
+
+def convergence_of(action: Action, level: int, window_touches: list[Touch]):
+    """Earlier touch, by another agent, of a target this action acts on (convergence.py:
+    typed targets, exact match, causal). Read-only and blocked actions (below L2)
+    neither touch nor converge."""
+    if level < TOUCH_LEVEL:
+        return None
+    return converges(window_touches, action.agent_id, targets_of(action))
+
+
 def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> Decision:
     """Decide one action. fleet_after/agent_after are the balances after this decision:
     spent + price on allow, unchanged on ask/deny (nothing is reserved yet)."""
@@ -228,6 +247,15 @@ def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> 
                    f"approval, whatever budget is left.",
                    "Wait for approval, run it against a local dev database first, or scope it "
                    "with a WHERE clause.")
+
+    conv = convergence_of(action, level, s.window_touches)
+    if conv:
+        return out("ask", "convergence",
+                   f"Kosha: target convergence. {conv.earlier_agent} already acted on "
+                   f"{conv.target} this window; {action.agent_id} acting on it too needs human "
+                   f"approval, whatever budget is left.",
+                   f"Wait for a human to review both actions on {conv.target}, or leave that "
+                   f"target to {conv.earlier_agent} and act on a different one.")
 
     if escalation_asks(s.recent_actions, action.agent_id, level):
         threshold = escalation_threshold(s.recent_actions, action.agent_id)

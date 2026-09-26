@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from kosha.pricing.convergence import touch
 from kosha.pricing.policy import (Decision, LedgerState, decide, escalation_threshold,
                                   escalation_triggered)
 
@@ -328,3 +329,56 @@ def test_price_comes_from_pricing_per_cell():
     push = decide(act(), 4, "rev|shared|nopriv", state())
     force = decide(act(), 4, "irrev|shared|nopriv", state())
     assert (push.price, force.price) == (30, 40)
+
+
+# --- convergence ---
+
+def test_convergence_asks_regardless_of_budget_headroom():
+    first = act(["kubectl", "apply", "-f", "deploy.yaml"], agent_id="agent-1")
+    later = act(["sed", "-i", "s/1/2/", "deploy.yaml"], agent_id="agent-2")
+    s = state(fleet_budget=1e9, agent_cap=1e9)
+    s.window_touches = [touch(first, 4)]
+    d = decide(later, 2, "rev|local|nopriv", s)
+    assert (d.decision, d.rule) == ("ask", "convergence")
+    assert "path:deploy.yaml" in d.reason and "agent-1" in d.reason
+    assert d.suggestion and "path:deploy.yaml" in d.suggestion
+    assert (d.fleet_after, d.agent_after) == (0, 0)          # an ask charges nothing
+
+
+def test_convergence_ignores_same_agent_and_read_only():
+    first = act(["kubectl", "apply", "-f", "deploy.yaml"], agent_id="agent-1")
+    s = state()
+    s.window_touches = [touch(first, 4)]
+    same = act(["sed", "-i", "s/1/2/", "deploy.yaml"], agent_id="agent-1")
+    assert decide(same, 2, "rev|local|nopriv", s).rule == "ok"
+    reader = act(["cat", "deploy.yaml"], agent_id="agent-2")
+    assert decide(reader, 0, "rev|local|nopriv", s).rule == "ok"
+    assert touch(reader, 0) is None
+
+
+def test_pending_ask_counts_as_touch():
+    """agent-1's chmod 777 is asked (L5) and still pending: never approved, never ran.
+    Its target is recorded as a touch at decision time, so agent-2 acting on the same
+    path converges. Recording only allowed actions would miss it."""
+    ledger = state(fleet_budget=1e9, agent_cap=1e9)
+    first = act(["chmod", "-R", "777", "logs/"], agent_id="agent-1")
+    d1 = decide(first, 5, "*|*|priv", ledger)
+    assert (d1.decision, d1.rule) == ("ask", "l5")
+    ledger.window_touches.append(touch(first, 5))              # recorded on ask, still pending
+
+    later = act(["rm", "-rf", "logs"], agent_id="agent-2")
+    d2 = decide(later, 3, "irrev|local|nopriv", ledger)
+    assert (d2.decision, d2.rule) == ("ask", "convergence")
+    assert "path:logs" in d2.reason
+
+    allowed_only = state(fleet_budget=1e9, agent_cap=1e9)      # ask never recorded
+    assert decide(later, 3, "irrev|local|nopriv", allowed_only).rule == "ok"
+
+
+def test_convergence_comes_before_escalation_and_after_l5():
+    first = act(["git", "push", "origin", "release"], agent_id="agent-1")
+    s = state(recent=[("agent-1", 4), ("agent-2", 4)])
+    s.window_touches = [touch(first, 4)]
+    later = act(["git", "push", "--force", "origin", "release"], agent_id="agent-2")
+    assert decide(later, 4, "irrev|shared|nopriv", s).rule == "convergence"
+    assert decide(later, 5, "*|*|priv", s).rule == "l5"
