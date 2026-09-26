@@ -1,4 +1,12 @@
-"""kosha-hook: Claude Code PreToolUse / PostToolUse / PostToolUseFailure hook.
+"""kosha-hook: PreToolUse / PostToolUse / PostToolUseFailure hook for Claude Code and Bob.
+
+Both harnesses send the same payload shape ({session_id, cwd, hook_event_name,
+tool_name, tool_input, tool_use_id}); the harness is told apart by tool name.
+Bob's payload carries no agent identity, so Bob's native tools are charged to one
+pooled agent, "bob-native": fleet budget and escalation see them, per-agent caps can't
+separate them. kosha-mcp calls (mcp__kosha-*) are already gated by kosha-mcp and pass.
+Bob only fires PostToolUse for tools that succeeded, so a failed native Bob call is
+never refunded (the conservative side).
 
 PreToolUse asks koshad about gated tools. Deny and ask both block with exit 2 and the
 reason on stderr: the one blocking channel both Claude Code and Bob honor (Bob ignores
@@ -22,6 +30,12 @@ which the harness treats as allow):
                             "hooks": [{"type": "command", "command": "/abs/.venv/bin/kosha-hook", "timeout": 10}]}],
     "PostToolUseFailure": [{"matcher": "^(Bash|Edit|MultiEdit|Write|NotebookEdit)$",
                             "hooks": [{"type": "command", "command": "/abs/.venv/bin/kosha-hook", "timeout": 10}]}]}}
+
+Bob: same "hooks" block in <workspace>/.bob/settings.json (trusted workspace) or the
+user settings, PreToolUse and PostToolUse only, matcher
+  "^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$"
+Anchor it: Bob tests the matcher unanchored, so "write_file" alone would also match
+kosha-mcp's own mcp__kosha-<mode>__write_file.
 """
 import json
 import os
@@ -33,12 +47,20 @@ CLIENT_TIMEOUT = max(DEADLINE - 0.5, 0.5)                         # HTTP, inside
 MAX_REASON = 2000                                                 # chars written to stderr
 MAX_STDIN = 8 * 1024 * 1024
 
-# Claude Code tool -> Action.tool. Anything not listed and not read-only is priced
-# as "other" (unknown = expensive); read-only tools are not kosha's call.
+# Harness tool -> Action.tool. Anything not listed and not read-only is priced as
+# "other" (unknown = expensive); read-only tools are not kosha's call.
 CLAUDE_TOOLS = {"Bash": "run_command", "Edit": "edit_file", "MultiEdit": "edit_file",
                 "NotebookEdit": "edit_file", "Write": "write_file"}
+BOB_TOOLS = {"execute_command": "run_command", "write_file": "write_file",
+             "apply_diff": "edit_file", "insert_content": "edit_file",
+             "search_and_replace": "edit_file", "office_edit": "edit_file"}
 READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite",
-                   "TaskOutput", "ListMcpResourcesTool", "ReadMcpResourceTool"}
+                   "TaskOutput", "ListMcpResourcesTool", "ReadMcpResourceTool",
+                   # Bob
+                   "read_file", "glob", "grep", "list_files", "office_read", "web_fetch",
+                   "update_todo_list", "search_ibm_docs", "list_ibm_doc_libraries"}
+KOSHA_MCP_PREFIX = "mcp__kosha"   # kosha-mcp tools: already priced by kosha-mcp itself
+BOB_AGENT = "bob-native"
 POST_EVENTS = {"PostToolUse": "success", "PostToolUseFailure": "failure"}
 
 _pre = True   # until the event is known, a failure blocks
@@ -64,6 +86,19 @@ def _on_alarm(signum, frame) -> None:
     _fail(f"kosha-hook timed out after {DEADLINE:g}s")
 
 
+def harness_of(payload: dict) -> str:
+    name = payload.get("tool_name") or ""
+    if name in CLAUDE_TOOLS:
+        return "claude_code"
+    if name in BOB_TOOLS:
+        return "bob"
+    return "claude_code" if "transcript_path" in payload else "bob"
+
+
+def passes_through(name: str) -> bool:
+    return name in READ_ONLY_TOOLS or name.startswith(KOSHA_MCP_PREFIX)
+
+
 def action_id_for(payload: dict, harness: str) -> str:
     tool_use_id = payload.get("tool_use_id")
     if tool_use_id:
@@ -73,17 +108,19 @@ def action_id_for(payload: dict, harness: str) -> str:
 
 
 def build_action(payload: dict):
-    """Claude Code PreToolUse payload -> Action, or None if the tool is not gated."""
+    """PreToolUse payload -> Action, or None if the tool is not kosha's to gate."""
     import shlex
     from datetime import datetime, timezone
 
     from kosha.system.action import Action
 
     name = payload.get("tool_name") or ""
-    if name in READ_ONLY_TOOLS:
+    if passes_through(name):
         return None
+    harness = harness_of(payload)
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-    tool = CLAUDE_TOOLS.get(name, "other")
+    tool = (CLAUDE_TOOLS if harness == "claude_code" else BOB_TOOLS).get(name, "other")
+    cwd = str(payload.get("cwd") or "")
     argv, targets = [], []
     if tool == "run_command":
         command = str(tool_input.get("command") or "")
@@ -91,14 +128,17 @@ def build_action(payload: dict):
             argv = shlex.split(command)
         except ValueError:
             argv = command.split()
+        if harness == "bob" and isinstance(tool_input.get("cwd"), str) and tool_input["cwd"]:
+            cwd = os.path.normpath(os.path.join(cwd, tool_input["cwd"]))   # Bob's cwd is workspace-relative
     else:
-        targets = [str(tool_input[k]) for k in ("file_path", "notebook_path") if tool_input.get(k)]
-    return Action(action_id=action_id_for(payload, "claude_code"),
+        keys = ("file_path", "notebook_path") if harness == "claude_code" else ("path",)
+        targets = [os.path.normpath(os.path.join(cwd, str(tool_input[k])))
+                   for k in keys if tool_input.get(k)]
+    agent = str(payload.get("agent_id") or "main") if harness == "claude_code" else BOB_AGENT
+    return Action(action_id=action_id_for(payload, harness),
                   session_id=str(payload.get("session_id") or "unknown"),
-                  agent_id=str(payload.get("agent_id") or "main"),
-                  harness="claude_code", tool=tool, raw=tool_input, argv=argv,
-                  cwd=str(payload.get("cwd") or ""), targets=targets,
-                  ts=datetime.now(timezone.utc).isoformat())
+                  agent_id=agent, harness=harness, tool=tool, raw=tool_input, argv=argv,
+                  cwd=cwd, targets=targets, ts=datetime.now(timezone.utc).isoformat())
 
 
 def block_message(d) -> str:
@@ -121,9 +161,9 @@ def pre_tool_use(payload: dict) -> None:
 
 
 def post_tool_use(payload: dict, outcome: str) -> None:
-    if payload.get("tool_use_id") and (payload.get("tool_name") or "") not in READ_ONLY_TOOLS:
+    if payload.get("tool_use_id") and not passes_through(payload.get("tool_name") or ""):
         from kosha.adapters import client
-        client.settle(action_id_for(payload, "claude_code"), outcome, timeout=CLIENT_TIMEOUT)
+        client.settle(action_id_for(payload, harness_of(payload)), outcome, timeout=CLIENT_TIMEOUT)
     _exit(0)
 
 
