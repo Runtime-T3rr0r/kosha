@@ -283,5 +283,24 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 - **The approval text says "approved in the Kosha dashboard", and `web/` doesn't exist yet (task 12).** Until it does, a human approves with `curl -X POST localhost:8765/approvals/<id> -H 'content-type: application/json' -d '{"decision":"approve_once"}'` (ids from `GET /approvals`). **If the demo is recorded before `web/` exists, either build the minimal bundle view first or change that phrase.**
 - **Pricing-track text** (not mine, not touched): the hard-deny suggestion says "attach an approval token from a human", but no token mechanism exists, so an agent may invent one. The L5 suggestion ("use a variant ... e.g. chmod 644") is fine re-planning, but it slightly competes with "retry the exact call".
 
+## 2026-09-26: Approval and token gaps: real code gaps, fixed on the system side
+
+**Found by reproducing them against a throwaway koshad through real kosha-mcp, before any fix:**
+1. **An approval covered the target, not the content.** The fingerprint was `(session, agent, tool, argv, targets)`, and for `db_exec`/`edit_file`/`write_file` `argv` is empty and `targets` is just the alias or path. A human approved `drop table audit_old` on prod; the retry with `drop table users` was allowed ("a human approved this action") and dropped `users`.
+2. **The approved path skips `policy.decide` entirely.** After approving that drop, `drop database prod_main`, normally a hard deny, was **allowed**.
+3. **The human approved blind.** The approval bundle showed `tool` and `argv` only, so the SQL or file body being approved was never displayed.
+4. **A self-issued `approval_token` lifted a hard deny.** kosha-mcp copied every agent argument, declared or not, into `raw`, and `policy._has_approval_token` accepts any non-empty value. `drop database app` on prod plus `approval_token: "i-made-this-up"` gave **allow** (not even held).
+
+**Fixed (system side):**
+- The fingerprint now includes the canonical `raw`, so an approval covers exactly the call the human saw. Any other arguments need a new approval, and a hard-deny statement can no longer ride on an unrelated approval.
+- The bundle carries `raw` for every entry, so the human sees the SQL or content.
+- kosha-mcp forwards only each tool's declared arguments. kosha-hook forwards only each native tool's declared parameters (Claude Code and Bob; lists in `PARAMS`), and for unknown tools it drops `approval_token`.
+- Regression tests cover all four cases. Re-running the reproduction: the retry with different SQL is held; the exact approved call runs and `users` survives; the hard deny after an unrelated approval is denied; the made-up token is denied. Full suite: 743 passed.
+
+**Still open, Pricing track (`policy.py`, not touched):**
+- The token check accepts any non-empty value, and nothing issues or verifies tokens. Stripping is closed on my side, but any other path that writes `raw` would reopen it. Either have koshad issue and verify tokens, or drop the token exemption and make prod drops an ask.
+- The hard-deny suggestion tells agents to "attach an approval token from a human", which invites exactly this.
+- `delete from users where ...` on prod is allowed without asking (`destructive_sql` covers only deletes without a WHERE). That may be intended, but it's worth a deliberate decision.
+
 ## Next (task 9 onward), not started
 fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
