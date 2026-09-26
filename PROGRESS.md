@@ -171,5 +171,31 @@ Also:
 
 Harness used for (c): `bob_hooks_extracted.js` and `harness.js` in the session scratchpad. Not committed; I can add them under `docs/` if you want the result reproducible.
 
-## Next (task 7 onward), not started
-claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
+## 2026-09-26: task 7 done (kosha-hook for Claude Code)
+
+- `kosha/adapters/claude_hook.py`, console script `kosha-hook`. Handles `PreToolUse`, `PostToolUse` and `PostToolUseFailure` (the latter exists in Claude Code 2.1.283 and carries `error`). The payload fields were checked against the installed Claude Code: `{session_id, transcript_path, cwd, permission_mode, agent_id (subagents only), agent_type, tool_name, tool_input, tool_use_id}`.
+- **Mapping:** Bash → `run_command`; Edit/MultiEdit/NotebookEdit → `edit_file`; Write → `write_file`. Read-only tools (Read, Glob, Grep, ...) pass without asking koshad. **Any other tool is priced as `other`** (unknown = expensive) rather than waved through. `agent_id` comes from the payload (`main` when absent).
+- **Decisions:**
+  - allow → exit 0 and **no output**, so Claude Code's own permission mode still applies. Kosha adds a gate, it never removes one.
+  - deny and ask → **exit 2, reason on stderr**, which is the one blocking channel both harnesses honour. For ask, the text tells the human to approve in Kosha and the agent to retry the same call (the approval-by-retry flow).
+- **Settling needs no state:** `action_id = claude_code:<session_id>:<tool_use_id>`. PostToolUse confirms, PostToolUseFailure refunds, and neither ever blocks, even with koshad down.
+- **Fail-closed, built to the Bob findings above:**
+  - The SIGALRM deadline (`KOSHA_HOOK_DEADLINE`, default 3s) is armed before any non-stdlib import.
+  - Every path, including the alarm and every `BaseException`, ends in `os._exit`.
+  - Nothing ever goes to stdout, and stderr is capped at 2000 chars.
+  - Malformed stdin blocks.
+- **Also fixed:** `KoshaDB` still defaulted to the old 100/50 budgets while the table says 750/375. Anything constructing `KoshaDB()` directly ran on stale numbers. Budgets now default to the price table.
+- Tests: `tests/test_claude_hook.py` (26). All run the hook as a **real subprocess** and assert exit code, stdout and stderr:
+  - allow is silent; subagent identity is recorded; hard deny; ask blocks, and after approval the retry passes; edit/write leases are recorded
+  - PostToolUse confirms; PostToolUseFailure refunds
+  - koshad down, and a hanging koshad, both block within the deadline
+  - a hang inside the hook hits the alarm
+  - crashes with `RuntimeError`, `KeyboardInterrupt`, `SystemExit(0)`, `SystemExit(1)` and `MemoryError` all exit 2
+  - five kinds of malformed input all block
+  - a 5MB reason is truncated
+  - the installed console script fails closed
+  - Full suite: 513 passed.
+- **Not installed in this repo's `.claude/settings.json`,** on purpose: it would gate this very session. The registration snippet is in the module docstring (anchored matcher, absolute path to the venv's `kosha-hook`, timeout 10).
+
+## Next (task 8 onward), not started
+kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
