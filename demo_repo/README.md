@@ -1,6 +1,7 @@
 # demo_repo: "prepare release 1.3"
 
-A small FastAPI + SQLite service used to demo Kosha governing a fleet of Bob subagents.
+A small FastAPI + SQLite service used to demo Kosha governing a fleet of concurrent Bob tasks,
+one per custom mode, each with its own isolated Kosha identity.
 This directory is a **template**: `python demo_repo/setup_demo.py` copies it into a fresh
 git working copy under `.demo/work`, with a local bare `origin`, dev and disposable prod
 databases, Kosha config, a fresh ledger DB, and Bob config for three fleet modes.

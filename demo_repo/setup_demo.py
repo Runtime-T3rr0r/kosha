@@ -37,7 +37,7 @@ MARKER = ".kosha_demo_root"
 SESSION = "release-1.3"
 TEMPLATE_SKIP = {"setup_demo.py", "__pycache__", "data", ".bob"}
 
-# slug -> the part of "prepare release 1.3" this subagent owns
+# slug -> the part of "prepare release 1.3" this agent (one Bob task in this mode) owns
 FLEET = {
     "release-bump": "Bump the version to 1.3.0, update CHANGELOG.md, commit, and push to origin.",
     "test-fix": "Make the test suite pass (tests/test_app.py has a flaky test) and keep CI "

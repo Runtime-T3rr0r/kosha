@@ -9,7 +9,7 @@
 4. `kosha/api/server.py`: `koshad` with all 7 endpoints and nothing more. `/decide` calls the **real** `kosha.pricing.policy.decide`. `koshad` console script added to `pyproject.toml`.
 
 **Tested (`tests/test_kosha_db.py`, `test_client.py`, `test_server.py`; full suite 315 passed, the pricing track's 284 still pass):**
-- Concurrency: two threads released by a `threading.Barrier`, 300 loops each, for both the per-agent cap race (same agent) and the fleet budget race (two subagents). Spend never exceeds the cap, and exactly one of each pair is allowed. A separate test proves the write lock is held from the start of the transaction. Mutation-checked: swapping `BEGIN IMMEDIATE` for `BEGIN` makes that test fail. The race test alone did *not* catch it, because the first statement in the txn is already a write.
+- Concurrency: two threads released by a `threading.Barrier`, 300 loops each, for both the per-agent cap race (same agent) and the fleet budget race (two agents). Spend never exceeds the cap, and exactly one of each pair is allowed. A separate test proves the write lock is held from the start of the transaction. Mutation-checked: swapping `BEGIN IMMEDIATE` for `BEGIN` makes that test fail. The race test alone did *not* catch it, because the first statement in the txn is already a write.
 - Fail-closed client: connection refused, timeout, HTTP 500, non-JSON body, and JSON that isn't a Decision all give `deny/fail_closed`. Also checked by hand against a live `koshad` that was then killed.
 - Malformed `/decide` payloads (empty argv, missing targets, a tool outside the Literal set, `{}`, wrong types) never 500. `ls && rm -rf /` is hard-denied.
 
@@ -262,8 +262,12 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
 
 ## 2026-09-26: Integration decisions locked (before task 9)
 
+**Approval on camera (decided 2026-09-27, final):** a human approves with `curl -X POST localhost:8765/approvals/<id> -H 'content-type: application/json' -d '{"decision":"approve_once"}'` (ids from `GET /approvals`). No dashboard is needed for the demo.
+
+**Demo framing (decided 2026-09-27):** the demo shows **per-mode identity isolation across concurrent Bob tasks** (three tasks, one per custom mode, each with its own kosha-mcp identity). It does **not** show Bob's subagent feature (`spawn_subagent`), which can't carry per-mode kosha identity (see Pre-task-11 checks). Pitch and demo narration must not call the fleet "subagents".
+
 **Known limitations in v1. Name these openly in the pitch deck:**
-- **Native-tool calls are priced, but attributed to a shared pool, not per-agent.** Bob's native tools (`execute_command`, `write_file`, `apply_diff`, ...) are gated by kosha-hook and charged to one pooled identity, `bob-native`, because Bob's hook payload carries no agent identity. Fleet budget and escalation count them; per-agent caps can't separate subagents that use native tools. Per-agent precision holds only for calls made through kosha-mcp (one instance per mode, `groups`-pinned, verified live above). The demo modes remove native tools (layer 1), so in the demo `bob-native` should see no calls at all.
+- **Native-tool calls are priced, but attributed to a shared pool, not per-agent.** Bob's native tools (`execute_command`, `write_file`, `apply_diff`, ...) are gated by kosha-hook and charged to one pooled identity, `bob-native`, because Bob's hook payload carries no agent identity. Fleet budget and escalation count them; per-agent caps can't separate agents that use native tools. Per-agent precision holds only for calls made through kosha-mcp (one instance per mode, `groups`-pinned, verified live above). The demo modes remove native tools (layer 1), so in the demo `bob-native` should see no calls at all.
 - **Raw redaction is deferred (decided 2026-09-27).** `actions.raw`, approval bundles and events store tool input in plain text: commands, SQL, file bodies. Not redacting, because redacting the approval bundle would hide the content from the human who needs to see it to decide, and redacting only the post-resolution copy is more engineering than we have time for. **Mitigation:** (a) reset `kosha.db` fresh immediately before recording the demo; (b) the task 11 demo script uses only obviously fake secret-like strings (e.g. `sk-fake-demo-...`), never anything real.
 - **Future work: agent-visible budget query.** Agents can't ask Kosha about their remaining budget or the price of an action before trying it. There is deliberately no `kosha_status`/`kosha_quote` tool; adapters call only `/decide` and `/settle`. Revisit only if the task 11 demo shows it's needed.
 
@@ -278,7 +282,7 @@ Both servers were proven to work inside Bob (rows 1–2), so both cross results 
      - line 3 is the next step: for held, stop, tell the user, and **retry this exact call once they say it's approved**; for denied, re-plan; for unavailable, tell the user and retry once Kosha is back
      - every variant says "do not work around it"
    - **Mode `roleDefinition`** (test modes in the local `.bob/custom_modes.yaml`; task 10 carries the same text into `demo_repo/.bob/`): the fleet context, the tool names, and one rule per status tag, including "retry the exact same call after the user says it's approved", plus "never report a held, denied or unavailable step as done".
-   - This describes the **current** approval-by-retry behaviour. It does not decide wait-vs-bounce or how much fleet context goes in the message; both are still deferred until a real 3-subagent run.
+   - This describes the **current** approval-by-retry behaviour. It does not decide wait-vs-bounce or how much fleet context goes in the message; both are still deferred until a real 3-agent run.
 
 **Demo risks found while checking #3:**
 - **The approval text says "approved in the Kosha dashboard", and `web/` doesn't exist yet (task 12).** Until it does, a human approves with `curl -X POST localhost:8765/approvals/<id> -H 'content-type: application/json' -d '{"decision":"approve_once"}'` (ids from `GET /approvals`). **If the demo is recorded before `web/` exists, either build the minimal bundle view first or change that phrase.**
