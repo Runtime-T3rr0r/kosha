@@ -11,3 +11,4 @@ dist/
 bench/data/
 *.db-shm
 *.db-wal
+.demo/

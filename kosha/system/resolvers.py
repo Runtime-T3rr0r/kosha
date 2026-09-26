@@ -25,8 +25,10 @@ GIT_TIMEOUT = 1.0
 
 
 @lru_cache(maxsize=None)
-def load_config(path: Path = KOSHA_YAML) -> dict:
-    """config/kosha.yaml (gitignored; copy from config/kosha.example.yaml). {} if absent."""
+def load_config(path: Optional[Path] = None) -> dict:
+    """KOSHA_CONFIG if set, else config/kosha.yaml (gitignored; copy from
+    config/kosha.example.yaml). {} if absent."""
+    path = path or os.environ.get("KOSHA_CONFIG") or KOSHA_YAML
     try:
         return yaml.safe_load(Path(path).read_text()) or {}
     except FileNotFoundError:
