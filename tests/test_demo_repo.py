@@ -199,3 +199,12 @@ def test_reset_refuses_while_koshad_is_running(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="koshad is still running"):
         setup_demo.build(tmp_path / ".demo")
     assert (first["root"] / setup_demo.MARKER).exists() and first["work"].exists()   # untouched
+
+
+def test_roles_tell_agents_reads_are_free_and_not_to_ration(demo):
+    # live finding: agents refused 10x `git status` "to save budget" though Kosha priced it 0
+    modes = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
+    for m in modes:
+        role = m["roleDefinition"]
+        assert "Read-only steps" in role and "are free" in role
+        assert "Do not ration, skip or refuse normal work" in role

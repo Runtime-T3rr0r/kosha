@@ -47,8 +47,9 @@ def resolve_agent_id(raw_request: dict, server_instance_name: str) -> str:
 # Bob never forwards an MCP server's `instructions` to the model (its MCP client stores
 # them, nothing reads them), so the gating rules ride on every tool description, the
 # one channel Bob always shows. The mode's roleDefinition repeats them in full.
-GATING = (" Gated by Kosha: every call is priced against a budget shared by the whole agent "
-          "fleet. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
+GATING = (" Gated by Kosha: each call is priced by its risk against a budget shared by the whole "
+          "agent fleet; read-only calls are free, and Kosha, not you, decides what is too risky, so "
+          "don't ration normal work. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
           "the user and, once they say it is approved, retry this exact call. KOSHA DENIED means "
           "retrying will not help: re-plan. Never work around a block with other tools.")
 

@@ -264,3 +264,9 @@ def test_self_issued_token_does_not_lift_hard_deny_end_to_end(live_koshad, ws):
                                                  "approval_token": "i-made-this-up"}))
     assert is_error and text.startswith("KOSHA DENIED")
     assert last_action(live_koshad)["rule"] == "hard_deny"
+
+
+def test_tool_descriptions_say_reads_are_free():
+    # live finding: agents refused cheap reads "to save budget"
+    for t in bob_mcp.TOOLS:
+        assert "read-only calls are free" in t.description and "don't ration normal work" in t.description
