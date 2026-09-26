@@ -46,5 +46,25 @@ Rebased onto the Pricing track's `d8d7c1e` (match.py, the single-agent L4 escala
 - `rm` of a path outside the workspace is raised to shared scope (L4). No effects entry exists for that, so it reuses the entry and bumps the scope, mirroring `file_write_outside_workspace`.
 - `tee FILE`, `cp`, `mv`, `sed -i` aren't file-write families in match.py, so they price as `unknown` (L4). That's conservative, but a benign `sed -i` on a tracked file will over-charge. It's a Pricing-track call whether to add entries.
 
+## 2026-09-26: Bob hook facts, read from the installed Bob IDE source
+
+Source: `~/.local/opt/bobide/resources/app/extensions/bob-code/dist/extension.js` (IBM Bob 1.126.0+bob2.2.0). Read-only inspection. No credentials were touched; `~/.bob/settings/settings.json` currently holds only a migration flag.
+
+- **The installed `bob` is Bob IDE (a VS Code fork), not a `bob run` shell CLI.** The PDF's `bob run --disable-tool-groups execute,edit` doesn't apply here. Layer 1 has to be done through custom-mode `groups` (modes live in `custom_modes.yaml`, e.g. `groups: ["read","mcp",...]` without `edit`/`execute`).
+- **Hook config:** `{"hooks": {"PreToolUse": [{"matcher": "<regex>", "hooks": [{"type": "command", "command": "...", "timeout": <sec>}]}]}}`.
+  - Global hooks: the `hooks` key in the user settings (`disableGlobalHooks` switches them off).
+  - Workspace hooks: `<workspace>/.bob/settings.json`, and only if the workspace is trusted.
+  - Also supports `"type": "http"` (a POST with the same JSON). **Don't use it for kosha:** a failed request is skipped, which means allow.
+- **The matcher is a regex tested against `tool_name`.**
+  - Native write/exec tools: `execute_command`, `write_file`, `apply_diff`, `insert_content`, `search_and_replace`, `office_edit`.
+  - Read-only: `read_file`, `glob`, `grep`, `list_files`.
+  - Subagents: `spawn_subagent`.
+- **PreToolUse stdin:** `{session_id: rootTaskId, cwd, hook_event_name, tool_name, tool_input, tool_use_id}`. **There's no agent identity in the hook payload either.** `session_id` is the root task, so subagents share it, which works as the fleet id.
+- **Exit codes (this answers the PDF's open question):** exit **2** blocks, with stderr or stdout as the reason. **Any other nonzero exit is logged and ignored, i.e. allowed.** A spawn failure or timeout (`exitCode === null`) is also allowed. So every kosha-hook failure path must end in exactly `exit 2`.
+- **JSON output:** only `permissionDecision: "deny"` blocks. **`"ask"` is treated the same as `"allow"`**: Bob hooks have no ask. So kosha's `ask` must be sent to Bob as a deny whose reason says a human needs to approve it in kosha.
+- **Default hook timeout is 10s** (the `timeout` field is in seconds), and a timeout fails open. kosha-hook's own 2s SIGALRM stays well under it.
+- **PostToolUse fires only when the tool did *not* error**, and its payload adds `tool_response`. A failed native tool never settles through the hook, so its reservation stays charged. That's the conservative side, but worth knowing.
+- **Default approval block:** `approval.allowedExecutors = [{toolId: "execute_command", approvedCommands: [...read-only prefixes], deniedCommands: []}]`. Denied wins over approved, and it's matched per sub-command.
+
 ## Next (task 6 onward), not started
 bob_mcp.py → claude_hook.py → kosha-hook for Bob → fs_guard.py (stop and report) → demo_repo → demo scenario → web/.
