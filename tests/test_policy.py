@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from kosha.pricing.convergence import touch
-from kosha.pricing.policy import (Decision, LedgerState, decide, escalation_threshold,
+from kosha.pricing.policy import (Decision, LedgerState, batch_of, decide, escalation_threshold,
                                   escalation_triggered)
 
 
@@ -394,3 +394,60 @@ def test_convergence_comes_before_escalation_and_after_l5():
     later = act(["git", "push", "--force", "origin", "release"], agent_id="agent-2")
     assert decide(later, 4, "irrev|shared|nopriv", s).rule == "convergence"
     assert decide(later, 5, "*|*|priv", s).rule == "l5"
+
+
+# --- escalation counts by batch (one commit = one unit) ---
+NEW_FILE, L4_PUSH = (3, "irrev|local|nopriv"), (4, "rev|shared|nopriv")
+
+
+def run(steps):
+    """steps: (agent_id, batch_id, (level, cell)). Budgets out of reach, so only the
+    escalation rule can ask. Allowed actions enter the window with their batch key."""
+    recent, out = [], []
+    for i, (agent, batch, (level, cell)) in enumerate(steps):
+        a = act(["touch", f"f{i}.py"], agent_id=agent)
+        a.batch_id = batch
+        d = decide(a, level, cell, state(fleet_budget=1e9, agent_cap=1e9, recent=recent))
+        out.append(d)
+        if d.decision == "allow":
+            recent.append((agent, level, batch_of(a)))
+    return out
+
+
+def test_one_commit_of_ten_new_files_does_not_escalate_in_a_fleet():
+    """agent-2 in the window drops the threshold to L3, so new files (L3) count."""
+    steps = [("agent-2", "c0", (2, "rev|local|nopriv"))] + [("agent-1", "c1", NEW_FILE)] * 10
+    assert all(d.decision == "allow" for d in run(steps))
+    unbatched = run([(a, None, lc) for a, _, lc in steps])     # before: every file counted
+    assert [d.rule for d in unbatched].index("escalation") == 3
+
+
+def test_one_batch_of_ten_l4_actions_does_not_escalate_single_agent():
+    assert all(d.decision == "allow" for d in run([("agent-1", "c1", L4_PUSH)] * 10))
+    assert run([("agent-1", None, L4_PUSH)] * 10)[2].rule == "escalation"
+
+
+def test_two_separate_commits_still_escalate():
+    single = run([("agent-1", "c1", L4_PUSH), ("agent-1", "c2", L4_PUSH), ("agent-1", "c3", L4_PUSH)])
+    assert [d.rule for d in single] == ["ok", "ok", "escalation"]
+    fleet = run([("agent-2", "c0", (2, "rev|local|nopriv")), ("agent-1", "c1", NEW_FILE),
+                 ("agent-1", "c2", NEW_FILE), ("agent-1", "c3", NEW_FILE)])
+    assert [d.rule for d in fleet] == ["ok", "ok", "ok", "escalation"]
+
+
+def test_batch_after_two_commits_asks_on_every_consequential_action():
+    """Once two batches are in the window, a third batch asks from its first action."""
+    steps = [("agent-1", "c1", L4_PUSH), ("agent-1", "c2", L4_PUSH)] + [("agent-1", "c3", L4_PUSH)] * 3
+    assert [d.rule for d in run(steps)] == ["ok", "ok", "escalation", "escalation", "escalation"]
+
+
+def test_same_batch_key_from_two_agents_counts_twice():
+    steps = [("agent-1", "c1", NEW_FILE), ("agent-2", "c1", NEW_FILE), ("agent-2", "c9", NEW_FILE)]
+    assert run(steps)[2].rule == "escalation"
+
+
+def test_entries_without_batch_count_one_each():
+    assert escalation_triggered([("a", 4), ("a", 4)])
+    assert escalation_triggered([("a", 4, None), ("a", 4, None)])
+    assert not escalation_triggered([("a", 4, "c1"), ("a", 4, "c1")])
+    assert escalation_triggered([("a", 4, "c1"), ("a", 4)])

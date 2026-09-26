@@ -3,6 +3,7 @@ import pytest
 
 from kosha.pricing.match import match_command, segments, sql_sub
 from kosha.pricing.policy import SINGLE_AGENT_CONSEQUENTIAL
+from kosha.pricing.pricing import cell_of
 from kosha.pricing.rubric import classify
 
 
@@ -285,3 +286,40 @@ def test_resource_hijacking_never_drops_below_the_single_agent_escalation_thresh
                                   ["python", "-c", "print(1)"], ["node", "-e", "1"]])
 def test_dual_use_commands_stay_unknown_on_purpose(argv):
     assert match_command(argv)["id"] == "unknown"
+
+
+# --- direct ./script execution matches its interpreter form ---
+
+def level_cell(argv: list[str]) -> tuple[str, int, str]:
+    m = match_command(argv)
+    return (m["id"], classify(m["reversible"], m["scope"], m["privilege"]),
+            cell_of(m["reversible"], m["scope"], m["privilege"]))
+
+
+@pytest.mark.parametrize("interpreted, direct", [
+    ("bash deploy.sh", "./deploy.sh"),
+    ("sh scripts/deploy_config.sh", "./scripts/deploy_config.sh"),
+    ("bash run.sh", "./run.sh"),
+    ("bash ./build.sh --release", "./build.sh --release"),
+    ("python scripts/seed.py", "scripts/seed.py"),
+    ("sudo bash run.sh", "sudo ./run.sh"),
+])
+def test_direct_script_classifies_like_interpreter_form(interpreted, direct):
+    assert level_cell(interpreted.split()) == level_cell(direct.split())
+
+
+def test_bash_deploy_sh_and_direct_deploy_sh_are_identical():
+    assert level_cell(["bash", "deploy.sh"]) == level_cell(["./deploy.sh"]) == \
+        ("deploy_trigger", 4, "irrev|shared|nopriv")
+
+
+@pytest.mark.parametrize("cmd", ["./run.sh", "./build", "bin/setup", "./gradlew build"])
+def test_direct_local_script_is_opaque_not_unknown(cmd):
+    m = match_command(cmd.split())
+    assert (m["id"], m["opaque_script"]) == ("opaque_script", True)
+    assert level_cell(cmd.split())[1:] == (3, "irrev|local|nopriv")
+
+
+@pytest.mark.parametrize("cmd", ["/usr/local/bin/foo", "foo --bar", "bash -c true", "python -m http.server"])
+def test_installed_tools_and_inline_code_are_not_local_scripts(cmd):
+    assert mid(cmd) == "unknown"

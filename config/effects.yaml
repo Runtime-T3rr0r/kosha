@@ -713,8 +713,9 @@
   note: "playwright test / cypress run (also via npx): write screenshots, videos, test-results/"
 
 # --- opaque scripts ---
-# Flat fallback for python <file>, bash|sh <file>, npm run <script>, npm|yarn|pnpm test,
-# make: effects are hidden inside the script, so it is charged a fixed irrev|local
+# Flat fallback for python <file>, bash|sh <file>, a direct ./<file> or other
+# repo-relative path, npm run <script>, npm|yarn|pnpm test, make: effects are hidden
+# inside the script, so it is charged a fixed irrev|local
 # cell. Scanning short scripts (< ~300 lines) for their real effects is not built yet.
 - id: opaque_script
   match: {family: script, sub: opaque, flags_any: []}
@@ -750,7 +751,7 @@
   scope: shared
   privilege: false
   read_only: false
-  note: "deploy script / deploy tool call"
+  note: "deploy script / deploy tool call; a local script with deploy in its name matches here whether run as ./deploy.sh or bash deploy.sh"
 
 # --- fallback ---
 - id: unknown

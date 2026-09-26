@@ -15,11 +15,13 @@ File order in effects.yaml never decides between entries with different axes, so
 reordering the file cannot downgrade a match (e.g. `chmod a+rwx +x` is chmod_777,
 not chmod_exec, wherever the two entries sit).
 
-`xargs [opts] CMD ...` and `npx [opts] CMD ...` are matched as CMD. Local scripts
-run through an interpreter (python <file>, bash|sh <file>, npm run <script>), `make`,
-and `npm|yarn|pnpm test` (a package.json script, so just as opaque) match the flat
+`xargs [opts] CMD ...` and `npx [opts] CMD ...` are matched as CMD. Local scripts,
+run through an interpreter (python <file>, bash|sh <file>, npm run <script>) or
+directly by a repo-relative path (./deploy.sh, scripts/run), `make`, and
+`npm|yarn|pnpm test` (a package.json script, so just as opaque) match the flat
 opaque_script fallback and carry opaque_script=True, so callers can count how often
-it fires.
+it fires. `bash x.sh` and `./x.sh` always match the same entry: a local script with
+"deploy" in its file name is deploy_trigger in both forms.
 
 A leading `sudo` (also behind env/time/nohup or VAR=1) always sets privilege=True on
 the result, whatever the underlying command matched, including `unknown`.
@@ -145,6 +147,21 @@ def script_arg(args: list[str]) -> Optional[str]:
             return None
         if not a.startswith("-"):
             return a
+    return None
+
+
+def local_script(argv: list[str]) -> Optional[str]:
+    """The local script an argv runs, however it is invoked: the file handed to an
+    interpreter (python|bash|sh FILE), or argv[0] itself when it is run directly by a
+    repo-relative path (./deploy.sh, scripts/run, bin/setup). A shebang only makes the
+    interpreter implicit, it doesn't change what runs, so both forms get the same
+    match. Absolute paths and bare names on PATH are installed tools, not local
+    scripts; they return None."""
+    cmd, args = Path(argv[0]).name, argv[1:]
+    if cmd.startswith("python") or cmd in {"bash", "sh"}:
+        return script_arg(args)
+    if "/" in argv[0] and not argv[0].startswith(("/", "~", "$")):
+        return argv[0]
     return None
 
 
@@ -347,9 +364,10 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "script", "opaque"
     if cmd == "alembic" or (cmd.startswith("python") and "migrate" in args):
         return "migrate", "local"
-    if "deploy" in cmd:
+    script = local_script(argv)
+    if "deploy" in cmd or (script and "deploy" in Path(script).name):
         return "deploy", None
-    if (cmd.startswith("python") or cmd in {"bash", "sh"}) and script_arg(args):
+    if script:
         return "script", "opaque"
     if cmd == "npm" and first == "run" and len(args) > 1:
         return "script", "opaque"
