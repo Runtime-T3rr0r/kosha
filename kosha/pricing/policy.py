@@ -1,7 +1,7 @@
 """Policy: turn one classified, priced action plus fleet ledger state into allow | ask | deny.
 
 Branch order (first match wins):
-  hard_deny -> l5 -> escalation -> fleet_budget -> agent_cap -> ok
+  hard_deny -> l5 -> destructive_sql -> escalation -> fleet_budget -> agent_cap -> ok
 
 Deterministic by design. Classification lives in rubric.py, pricing in pricing.py;
 this module only applies the rules. Every ask/deny carries a reason and a
@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
+from kosha.pricing.match import PROD_NAME
 from kosha.pricing.pricing import price as cell_price
 from kosha.pricing.rubric import LEVEL_NAMES
 
@@ -22,7 +23,16 @@ if TYPE_CHECKING:
 CONSEQUENTIAL = 3          # L3+ counts toward the escalation rule once 2+ agents are in the window
 SINGLE_AGENT_CONSEQUENTIAL = 4   # L4+ while only one agent is in the window
 SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
-DROP_DB = re.compile(r"\bdrop\s+(database|schema)\b", re.I)
+DROP_DB = re.compile(r"\bdrop\s+(?:database|schema)\s+(?:if\s+exists\s+)?[`\"'\[]?([\w.$-]+)", re.I)
+SQL_CLIENT = re.compile(r"\b(psql|mysql|mariadb|sqlite3)\b")
+# one SQL statement, up to a terminator, quote or shell operator; what's left of the
+# command once these are cut out names the connection (URL, alias, db file, host)
+SQL_STATEMENT = re.compile(
+    r"\b(?:drop|truncate|delete|update|insert|select|create|alter|grant)\b[^;'\"&|]*", re.I)
+DROP_TABLE = re.compile(r"\bdrop\s+table\b", re.I)
+TRUNCATE = re.compile(r"\btruncate\s+(?:table\s+)?[`\"\[]?\w", re.I)
+UNSCOPED_WRITE = re.compile(r"\bdelete\s+from\b|\bupdate\s+\S+\s+set\b", re.I)
+WHERE = re.compile(r"\bwhere\b", re.I)
 
 
 @dataclass
@@ -34,7 +44,8 @@ class Decision:
     price: float
     fleet_after: float
     agent_after: float
-    rule: str              # "fleet_budget" | "agent_cap" | "escalation" | "l5" | "hard_deny" | "ok"
+    rule: str              # "ok" | "hard_deny" | "l5" | "destructive_sql" | "escalation" |
+                           # "fleet_budget" | "agent_cap" | "fail_closed" (adapters/client.py)
     suggestion: Optional[str] = None
 
 
@@ -74,12 +85,59 @@ def _rm_rf_root(argv: list[str]) -> bool:
     return False
 
 
-def _drops_prod_db(action: Action) -> bool:
+def _sql_text(action: Action) -> Optional[str]:
+    """argv plus raw tool input of an action that runs SQL (db_exec, raw `sql`, or a
+    psql/mysql/sqlite3 command), else None. File edits only write SQL, never run it."""
+    if action.tool in ("edit_file", "write_file"):
+        return None
     raw = action.raw or {}
     text = " ".join([*action.argv, *(str(v) for v in raw.values())])
-    if not DROP_DB.search(text):
+    if action.tool == "db_exec" or "sql" in raw or SQL_CLIENT.search(text):
+        return text
+    return None
+
+
+def _targets_prod(action: Action, text: str) -> bool:
+    """prod as a whole name token (match.PROD_NAME) in the targets or the connection
+    part of the command, i.e. the text with SQL statements cut out, so a table or
+    database named in the SQL itself never counts."""
+    return any(PROD_NAME.search(t) for t in [*action.targets, SQL_STATEMENT.sub(" ", text)])
+
+
+def _drops_prod_db(action: Action) -> bool:
+    """DROP DATABASE/SCHEMA where the dropped name or the connection names prod."""
+    text = _sql_text(action)
+    if text is None:
         return False
-    return any("prod" in t.lower() for t in [*action.targets, text])
+    dropped = DROP_DB.findall(text)
+    if not dropped:
+        return False
+    return any(PROD_NAME.search(n) for n in dropped) or _targets_prod(action, text)
+
+
+def _destructive_sql(text: str) -> Optional[str]:
+    """DROP TABLE, TRUNCATE, or DELETE/UPDATE without WHERE, per statement."""
+    for stmt in re.split(r";|&&", text):
+        if DROP_TABLE.search(stmt):
+            return "DROP TABLE"
+        if TRUNCATE.search(stmt):
+            return "TRUNCATE"
+        m = UNSCOPED_WRITE.search(stmt)
+        if m and not WHERE.search(stmt[m.start():]):
+            return f"{m.group(0).split()[0].upper()} without WHERE"
+    return None
+
+
+def _destructive_sql_on_shared(action: Action, cell: str) -> Optional[str]:
+    """What the destructive statement is, if the action runs one against a shared
+    database (cell scope not local) or a prod-named one; else None."""
+    text = _sql_text(action)
+    what = _destructive_sql(text) if text is not None else None
+    if what is None:
+        return None
+    parts = cell.split("|")
+    shared = len(parts) == 3 and parts[1] in ("shared", "external")
+    return what if shared or _targets_prod(action, text) else None
 
 
 def _has_approval_token(action: Action) -> bool:
@@ -162,6 +220,14 @@ def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> 
         return out("ask", "l5", f"Kosha: {name} ({cell}) always needs human approval.",
                    "Wait for approval, or use a variant that doesn't grant access or add "
                    "persistence (e.g. chmod 644 instead of 777).")
+
+    destructive = _destructive_sql_on_shared(action, cell)
+    if destructive:
+        return out("ask", "destructive_sql",
+                   f"Kosha: {destructive} against a shared/prod database always needs human "
+                   f"approval, whatever budget is left.",
+                   "Wait for approval, run it against a local dev database first, or scope it "
+                   "with a WHERE clause.")
 
     if escalation_asks(s.recent_actions, action.agent_id, level):
         threshold = escalation_threshold(s.recent_actions, action.agent_id)

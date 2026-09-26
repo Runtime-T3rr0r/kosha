@@ -65,7 +65,12 @@ TABLE = [
      ["cd", "sort", "head", "echo_nonsecret", "xargs", "pytest"]),
     ("mkdir", 2, ["mkdir"]),
     ("chmod +x", 2, ["chmod_exec"]),
-    ("opaque script (python/bash <file>, npm run), flat fallback", 3, ["opaque_script"]),
+    ("opaque script (python/bash <file>, npm run, make), flat fallback", 3, ["opaque_script"]),
+    ("sed -i / cp / mv, tracked+committed paths (like an edit)", 2,
+     ["sed_inplace_tracked_clean", "cp_tracked_clean", "mv_tracked_clean"]),
+    ("sed -i / cp / mv, untracked or unresolved paths", 3,
+     ["sed_inplace_untracked", "cp_untracked", "mv_untracked"]),
+    ("tee with no file operand", 0, ["tee_stdout"]),
 ]
 
 EXPECTED = {eid: (row, level) for row, level, ids in TABLE for eid in ids}

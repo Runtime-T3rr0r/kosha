@@ -16,8 +16,16 @@ reordering the file cannot downgrade a match (e.g. `chmod a+rwx +x` is chmod_777
 not chmod_exec, wherever the two entries sit).
 
 `xargs [opts] CMD ...` is matched as CMD. Local scripts run through an interpreter
-(python <file>, bash|sh <file>, npm run <script>) match the flat opaque_script
-fallback and carry opaque_script=True, so callers can count how often it fires.
+(python <file>, bash|sh <file>, npm run <script>) and `make` match the flat
+opaque_script fallback and carry opaque_script=True, so callers can count how often
+it fires.
+
+A leading `sudo` (also behind env/time/nohup or VAR=1) always sets privilege=True on
+the result, whatever the underlying command matched, including `unknown`.
+
+File-writing commands (sed -i, cp, mv, tee FILE, a redirect) also return
+write_paths: the paths a resolver must find tracked and clean before the match can
+be lowered to its *_tracked_clean entry. Offline they take the untracked variant.
 
 Unmatched commands resolve to the `unknown` entry (conservative default) with
 matched=False, so callers can count coverage.
@@ -43,6 +51,11 @@ SHELL_READ = {"cd", "sort", "head", "echo"}
 XARGS_OPTS_WITH_VALUE = {"-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a", "--max-args",
                          "--max-procs", "--max-lines", "--delimiter", "--arg-file"}
 SECRET_VAR = re.compile(r"\$\{?\w*(key|token|secret|passw|credential)\w*", re.I)
+# prod/staging as a whole name token: matches prod, prod_orders, db.prod.internal,
+# production, staging2; not products, reproduce_db, preprod_x
+SHARED_NAME = re.compile(r"(?<![a-z0-9])(?:prod(?:uction)?|staging)\d*(?![a-z0-9])", re.I)
+PROD_NAME = re.compile(r"(?<![a-z0-9])prod(?:uction)?\d*(?![a-z0-9])", re.I)
+SED_ARG_OPTS = {"-e", "-f", "-l", "--expression", "--file", "--line-length"}
 
 
 @lru_cache(maxsize=None)
@@ -82,6 +95,15 @@ def strip_prefixes(argv: list[str]) -> list[str]:
     return argv
 
 
+def has_sudo(argv: list[str]) -> bool:
+    """sudo among the prefixes strip_prefixes removes (sudo x, env A=1 sudo x, ...)."""
+    while argv and (argv[0] in PREFIXES or re.match(r"^\w+=", argv[0])):
+        if argv[0] == "sudo":
+            return True
+        argv = argv[1:]
+    return False
+
+
 def sql_sub(argv: list[str]) -> Optional[str]:
     text = " ".join(argv)
     m = re.search(r"(?:-c|-e)\s+(.+)$", text) or re.search(r"\b(select|insert|update|delete|drop|truncate)\b.*", text, re.I)
@@ -89,7 +111,7 @@ def sql_sub(argv: list[str]) -> Optional[str]:
         return None
     sql = m.group(0 if m.re.pattern.startswith("\\b") else 1).strip().lower()
     verb = sql.split()[0] if sql.split() else ""
-    shared = re.search(r"prod|staging", text, re.I)
+    shared = SHARED_NAME.search(text)
     if verb == "select":
         return "select"
     if verb in {"insert", "update", "delete", "drop", "truncate"} and shared:
@@ -109,6 +131,97 @@ def script_arg(args: list[str]) -> Optional[str]:
         if not a.startswith("-"):
             return a
     return None
+
+
+def operands(args: list[str]) -> list[str]:
+    """Non-option arguments; everything after `--` counts."""
+    out, rest = [], False
+    for a in args:
+        if rest or not a.startswith("-") or a == "-":
+            out.append(a)
+        elif a == "--":
+            rest = True
+    return out
+
+
+def sed_in_place(args: list[str]) -> bool:
+    """-i / --in-place, also inside a short-option cluster (-ni, -Ei). -i takes an
+    attached suffix, so -ie is in-place with suffix "e"."""
+    for a in args:
+        if a == "--":
+            break
+        if a.startswith("--in-place"):
+            return True
+        if a.startswith("-") and not a.startswith("--"):
+            for ch in a[1:]:
+                if ch == "i":
+                    return True
+                if ch in "efl":
+                    break
+    return False
+
+
+def sed_files(args: list[str]) -> list[str]:
+    """Input files of a sed call: operands minus the script (the first operand, unless
+    the script came from -e/-f)."""
+    files, script_given, i = [], False, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            files.extend(args[i + 1:])
+            break
+        if a in SED_ARG_OPTS:
+            script_given |= a in {"-e", "-f", "--expression", "--file"}
+            i += 2
+            continue
+        if a.startswith(("--expression=", "--file=")) or (
+                a.startswith("-") and not a.startswith("--") and len(a) > 2 and a[1] in "ef"):
+            script_given = True
+        elif not a.startswith("-") or a == "-":
+            files.append(a)
+        i += 1
+    return files if script_given else files[1:]
+
+
+def copy_paths(cmd: str, args: list[str]) -> list[str]:
+    """Paths cp/mv write: the destination (dest/<name> per source when dest is a
+    directory by -t or by 3+ operands), plus the sources for mv."""
+    target, rest, i = None, [], 0
+    while i < len(args):
+        a = args[i]
+        if a in {"-t", "--target-directory"} and i + 1 < len(args):
+            target, i = args[i + 1], i + 2
+            continue
+        if a.startswith("--target-directory="):
+            target = a.split("=", 1)[1]
+        else:
+            rest.append(a)
+        i += 1
+    ops = operands(rest)
+    if target is None and len(ops) < 2:
+        return ops
+    sources, dest = (ops, target) if target is not None else (ops[:-1], ops[-1])
+    if target is not None or len(sources) > 1:
+        written = [f"{dest.rstrip('/')}/{Path(src).name}" for src in sources]
+    else:
+        written = [dest]
+    return written + (sources if cmd == "mv" else [])
+
+
+def write_paths(argv: list[str]) -> list[str]:
+    """Paths a file-writing command modifies (see module docstring); [] otherwise."""
+    if not argv:
+        return []
+    if argv[0] == "__redirect__":
+        return argv[1:2]
+    cmd, args = Path(argv[0]).name, argv[1:]
+    if cmd == "sed" and sed_in_place(args):
+        return sed_files(args)
+    if cmd == "tee":
+        return [a for a in operands(args) if a != "/dev/null"]
+    if cmd in {"cp", "mv"}:
+        return copy_paths(cmd, args)
+    return []
 
 
 def xargs_command(argv: list[str]) -> list[str]:
@@ -173,6 +286,14 @@ def family_sub(argv: list[str]) -> tuple[str, Optional[str]]:
         return "systemctl", first
     if "authorized_keys" in text:
         return "ssh", "authorized_keys"
+    if cmd == "sed" and sed_in_place(args):
+        return "sed", "untracked"
+    if cmd in {"cp", "mv"}:
+        return cmd, "untracked"
+    if cmd == "tee":
+        return ("file_write", "untracked") if write_paths(argv) else ("shell", "tee")
+    if cmd == "make":
+        return "script", "opaque"
     if cmd == "alembic" or (cmd.startswith("python") and "migrate" in args):
         return "migrate", "local"
     if "deploy" in cmd:
@@ -195,13 +316,15 @@ def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -
     """Most specific effects entry for one argv.
 
     Returns {id, family, sub, flags, matched, opaque_script, reversible, scope,
-    privilege, read_only}; `flags` are the argv tokens that satisfied the entry's
-    flags_any condition.
+    privilege, read_only, write_paths}; `flags` are the argv tokens that satisfied the
+    entry's flags_any condition. privilege is forced True under a sudo prefix.
     """
     effects = effects if effects is not None else load_effects()
+    sudo = has_sudo(list(argv))
     argv = strip_prefixes(list(argv))
     if argv and Path(argv[0]).name == "xargs" and xargs_command(argv):
-        return match_command(xargs_command(argv), effects)
+        r = match_command(xargs_command(argv), effects)
+        return {**r, "privilege": r["privilege"] or sudo}
     family, sub = family_sub(argv) if argv else ("unknown", None)
     tokens = set(argv[1:])
     best = None
@@ -226,6 +349,7 @@ def match_command(argv: list[str], effects: Optional[tuple[dict, ...]] = None) -
         "opaque_script": best["id"] == "opaque_script",
         "reversible": best["reversible"],
         "scope": best["scope"],
-        "privilege": best["privilege"],
+        "privilege": best["privilege"] or sudo,
         "read_only": best["read_only"],
+        "write_paths": write_paths(argv) if family in {"file_write", "sed", "cp", "mv"} else [],
     }

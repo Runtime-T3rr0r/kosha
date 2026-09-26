@@ -162,6 +162,59 @@
   privilege: false
   read_only: false
   note: "creates a directory; rmdir undoes it"
+# sed -i / cp / mv: the parser matches the untracked variant; a resolver lowers it to
+# *_tracked_clean only when every path in the match's write_paths is tracked and clean
+# (cp: the destination; mv: destination and sources). `tee FILE` is a redirect-family
+# write and matches file_write_untracked; `make` matches opaque_script.
+- id: sed_inplace_tracked_clean
+  match: {family: sed, sub: tracked_clean, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "sed -i on tracked + committed files; git restore recovers them, same as an edit"
+- id: sed_inplace_untracked
+  match: {family: sed, sub: untracked, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "sed -i on untracked (or unresolved) files; no prior state to restore. sed without -i only prints and stays unknown for now"
+- id: cp_tracked_clean
+  match: {family: cp, sub: tracked_clean, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "overwrites a tracked + committed destination; git restore recovers it"
+- id: cp_untracked
+  match: {family: cp, sub: untracked, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "destination untracked, new, or unresolved; an overwritten untracked file is gone"
+- id: mv_tracked_clean
+  match: {family: mv, sub: tracked_clean, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: false
+  note: "sources and destination tracked + committed; git restore recovers both ends"
+- id: mv_untracked
+  match: {family: mv, sub: untracked, flags_any: []}
+  reversible: false
+  scope: local
+  privilege: false
+  read_only: false
+  note: "any end untracked, new, or unresolved; an overwritten untracked destination is gone"
+- id: tee_stdout
+  match: {family: shell, sub: tee, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "tee with no file operand (or only /dev/null) just passes input through"
 
 # --- rm / destructive local ---
 - id: rm_tracked_clean
@@ -588,7 +641,7 @@
   note: "grants cluster access"
 
 # --- opaque scripts ---
-# Flat fallback for python <file>, bash|sh <file>, npm run <script>: effects are hidden
+# Flat fallback for python <file>, bash|sh <file>, npm run <script>, make: effects are hidden
 # inside the script, so it is charged a fixed irrev|local cell. Scanning short scripts
 # (< ~300 lines) for their real effects is not built yet.
 - id: opaque_script

@@ -77,6 +77,34 @@ def test_drop_non_prod_db_is_not_hard_denied():
     a = act(["psql", "postgres://localhost/dev", "-c", "DROP DATABASE dev"])
     assert decide(a, 3, "irrev|local|nopriv", state()).rule != "hard_deny"
 
+@pytest.mark.parametrize("argv, raw", [
+    (["psql", "-c", "drop database prod"], {}),
+    (["psql", "-c", "drop database prod_orders"], {}),
+    (["psql", "-c", "DROP DATABASE IF EXISTS \"production\""], {}),
+    (["psql", "prod", "-c", "drop database app"], {}),
+    (["bash", "-c", "psql prod -c 'drop database app'"], {}),
+    (["db_exec"], {"db": "prod", "sql": "drop database app"}),
+])
+def test_hard_deny_drop_prod_db_by_name_token(argv, raw):
+    assert decide(act(argv, raw=raw), 4, "irrev|shared|nopriv", state()).rule == "hard_deny"
+
+@pytest.mark.parametrize("argv, raw", [
+    (["psql", "-c", "drop database products"], {}),
+    (["psql", "-c", "DROP DATABASE products"], {}),
+    (["psql", "reproduce_db", "-c", "drop database scratch"], {}),
+    (["psql", "-c", "drop database reproduce_db"], {}),
+    (["psql", "-c", "drop database preprod_copy"], {}),
+    (["db_exec"], {"db": "dev", "sql": "drop database products"}),
+])
+def test_prod_substring_is_not_hard_denied(argv, raw):
+    assert decide(act(argv, raw=raw), 3, "irrev|local|nopriv", state()).rule != "hard_deny"
+
+def test_writing_drop_database_into_a_file_is_not_hard_denied():
+    a = act([], targets=["/srv/prod/migrations/0001.sql"],
+            raw={"path": "/srv/prod/migrations/0001.sql", "content": "DROP DATABASE prod;"})
+    a.tool = "write_file"
+    assert decide(a, 3, "irrev|local|nopriv", state()).rule != "hard_deny"
+
 def test_hard_deny_wins_regardless_of_budget_and_other_rules():
     s = state(fleet_spent=0, agent_spent=0, recent=[("a", 4), ("b", 4)])
     d = decide(act(["rm", "-rf", "/"]), 5, "*|*|priv", s)
@@ -85,6 +113,79 @@ def test_hard_deny_wins_regardless_of_budget_and_other_rules():
 def test_hard_deny_does_not_charge():
     d = decide(act(["rm", "-rf", "/"]), 3, "irrev|local|nopriv", state(fleet_spent=10, agent_spent=4))
     assert (d.fleet_after, d.agent_after) == (10, 4)
+
+
+# --- b2. destructive SQL on a shared/prod database ---
+def db_act(db, sql, **kw):
+    a = act(["db_exec"], targets=[db], raw={"db": db, "sql": sql}, **kw)
+    a.tool = "db_exec"
+    return a
+
+def test_drop_table_on_prod_asks_with_full_headroom():
+    d = decide(db_act("prod", "drop table users"), 4, "irrev|shared|nopriv", state())
+    assert (d.decision, d.rule) == ("ask", "destructive_sql")
+    assert "DROP TABLE" in d.reason and d.suggestion
+    assert (d.fleet_after, d.agent_after) == (0, 0)
+
+def test_drop_table_on_local_dev_prices_through_the_budget():
+    d = decide(db_act("dev", "drop table users"), 3, "irrev|local|nopriv", state())
+    assert (d.decision, d.rule, d.price) == ("allow", "ok", 10)
+    d = decide(db_act("dev", "drop table users"), 3, "irrev|local|nopriv",
+               state(fleet_spent=95, agent_spent=10))
+    assert (d.decision, d.rule) == ("ask", "fleet_budget")
+
+@pytest.mark.parametrize("sql", [
+    "DROP TABLE users",
+    "truncate users",
+    "TRUNCATE TABLE users",
+    "delete from users",
+    "DELETE FROM users;",
+    "update users set admin = true",
+    "delete from sessions where id = 1; delete from users",
+])
+def test_destructive_sql_on_prod_asks(sql):
+    assert decide(db_act("prod", sql), 4, "irrev|shared|nopriv", state()).rule == "destructive_sql"
+
+@pytest.mark.parametrize("sql", [
+    "delete from users where id = 1",
+    "update users set admin = false where id = 2",
+    "insert into users values (1)",
+    "select * from users",
+])
+def test_scoped_or_non_destructive_sql_on_prod_uses_normal_rules(sql):
+    assert decide(db_act("prod", sql), 4, "irrev|shared|nopriv", state()).rule == "ok"
+
+def test_destructive_sql_asks_on_shared_scope_without_prod_in_the_name():
+    d = decide(db_act("analytics", "truncate events"), 4, "irrev|shared|nopriv", state())
+    assert d.rule == "destructive_sql"
+
+def test_destructive_sql_asks_on_prod_name_even_if_cell_is_local():
+    d = decide(db_act("prod_replica", "drop table users"), 3, "irrev|local|nopriv", state())
+    assert d.rule == "destructive_sql"
+
+def test_destructive_sql_via_psql_command():
+    a = act(["psql", "postgres://db.prod.internal/app", "-c", "DROP TABLE users"])
+    assert decide(a, 4, "irrev|shared|nopriv", state()).rule == "destructive_sql"
+    a = act(["psql", "postgres://localhost/dev", "-c", "DROP TABLE products"])
+    assert decide(a, 3, "irrev|local|nopriv", state()).rule == "ok"
+
+def test_table_named_prod_on_dev_db_is_not_destructive_sql():
+    d = decide(db_act("dev", "drop table prod_orders"), 3, "irrev|local|nopriv", state())
+    assert d.rule == "ok"
+
+@pytest.mark.parametrize("argv", [
+    ["truncate", "-s", "0", "prod.log"],
+    ["git", "push", "origin", "prod"],
+])
+def test_non_sql_commands_never_hit_destructive_sql(argv):
+    assert decide(act(argv), 4, "irrev|shared|nopriv", state()).rule == "ok"
+
+def test_destructive_sql_beats_budget_and_escalation():
+    s = state(fleet_spent=99, agent_spent=49, recent=[("a", 4), ("b", 4)])
+    assert decide(db_act("prod", "drop table users"), 4, "irrev|shared|nopriv", s).rule == "destructive_sql"
+
+def test_drop_database_on_prod_stays_hard_deny_not_destructive_sql():
+    assert decide(db_act("prod", "drop database app"), 4, "irrev|shared|nopriv", state()).rule == "hard_deny"
 
 
 # --- b. L5 ---
