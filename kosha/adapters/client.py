@@ -53,7 +53,7 @@ DENIED = "KOSHA DENIED: nothing was run, and retrying the same call will be deni
 UNAVAILABLE = "KOSHA UNAVAILABLE: nothing was run (Kosha could not decide, so it failed closed)."
 
 NEXT_HELD = ("Next step: stop, tell the user which call is waiting and why, and wait. Once the "
-             "user says it is approved in the Kosha dashboard, retry this exact call with the "
+             "user says a human has approved it in Kosha, retry this exact call with the "
              "same arguments. Do not work around it with other tools, scripts or commands.")
 NEXT_DENIED = ("Next step: re-plan using the suggestion above, or ask the user. Do not work "
                "around it with other tools, scripts or commands.")

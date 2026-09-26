@@ -121,3 +121,8 @@ def test_hook_failure_text_matches_client_unavailable_text():
     from kosha.adapters.claude_hook import UNAVAILABLE
     assert UNAVAILABLE.splitlines()[0] == client.UNAVAILABLE
     assert UNAVAILABLE.splitlines()[-1] == client.NEXT_UNAVAILABLE
+
+
+def test_held_text_does_not_assume_a_dashboard():
+    # approval may happen in the dashboard or via the API; the agent text must hold for both
+    assert "dashboard" not in client.NEXT_HELD.lower()
