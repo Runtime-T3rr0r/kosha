@@ -148,16 +148,15 @@ def _destructive_sql_on_shared(action: Action, cell: str) -> Optional[str]:
     return what if shared or _targets_prod(action, text) else None
 
 
-def _has_approval_token(action: Action) -> bool:
-    # Action has no dedicated field yet; the token is read from the raw tool input.
-    return bool((action.raw or {}).get("approval_token"))
-
-
 def _hard_deny_reason(action: Action) -> Optional[str]:
+    """Hard-deny patterns are final: no field on the action overrides them. Nothing
+    issues or verifies approval tokens yet, so an override would accept any string
+    the caller sets. An override comes back only with real issuance, tied to a human
+    approval in the queue."""
     if _rm_rf_root(action.argv):
         return "rm -rf on the filesystem root"
-    if _drops_prod_db(action) and not _has_approval_token(action):
-        return "dropping a prod database without an approval token"
+    if _drops_prod_db(action):
+        return "dropping a prod database"
     return None
 
 
@@ -233,7 +232,8 @@ def decide(action: Action, level: int, cell: str, ledger_state: LedgerState) -> 
     if hard:
         return out("deny", "hard_deny", f"Kosha: denied, {hard} is a hard-deny pattern.",
                    "Target a specific path inside the workspace, or run against a non-prod "
-                   "database / attach an approval token from a human.")
+                   "database. Hard-deny patterns have no override; a human has to do this "
+                   "outside Kosha.")
 
     if level >= 5:
         return out("ask", "l5", f"Kosha: {name} ({cell}) always needs human approval.",

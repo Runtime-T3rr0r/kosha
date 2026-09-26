@@ -69,10 +69,22 @@ def test_hard_deny_drop_prod_db_via_alias_and_raw_sql():
     a = act(["db_exec"], targets=["prod"], raw={"sql": "drop schema public cascade"})
     assert decide(a, 4, "irrev|shared|nopriv", state()).rule == "hard_deny"
 
-def test_drop_prod_db_with_approval_token_is_not_hard_denied():
-    a = act(["psql", "postgres://prod/app", "-c", "DROP DATABASE app"],
-            raw={"approval_token": "tok-123"})
-    assert decide(a, 4, "irrev|shared|nopriv", state()).rule != "hard_deny"
+@pytest.mark.parametrize("token", ["tok-123", "approved", "human-ok", "x" * 64, " ", True, 1])
+def test_approval_token_does_not_bypass_hard_deny(token):
+    """Nothing issues or verifies approval tokens yet, so any value set by the caller
+    is ignored: hard deny is final in this version."""
+    for a in (act(["psql", "postgres://prod/app", "-c", "DROP DATABASE app"],
+                  raw={"approval_token": token}),
+              act(["db_exec"], targets=["prod"], raw={"sql": "drop database app", "approval_token": token}),
+              act(["rm", "-rf", "/"], raw={"approval_token": token})):
+        d = decide(a, 4, "irrev|shared|nopriv", state(fleet_budget=1e9, agent_cap=1e9))
+        assert (d.decision, d.rule) == ("deny", "hard_deny")
+
+def test_hard_deny_suggestion_offers_no_override():
+    d = decide(act(["psql", "postgres://prod/app", "-c", "DROP DATABASE app"]), 4,
+               "irrev|shared|nopriv", state())
+    assert "token" not in d.reason.lower() and "token" not in d.suggestion.lower()
+    assert "non-prod" in d.suggestion
 
 def test_drop_non_prod_db_is_not_hard_denied():
     a = act(["psql", "postgres://localhost/dev", "-c", "DROP DATABASE dev"])
