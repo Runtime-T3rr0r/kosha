@@ -129,3 +129,57 @@ def shared_db_names() -> set[str]:
 def is_secret_var(name: str) -> bool:
     """Environment variable name that likely holds a credential."""
     return bool(SECRET_NAME.search(name.lstrip("$").strip("{}")))
+
+
+# --- Kosha's own control plane (self-approval guard, Tier 1) ---
+# An agent runs as the same OS user as koshad, so nothing stops it from POSTing to the
+# approval endpoint, editing the ledger DB, or rewiring .bob/ and hook settings. Anything
+# that *changes* these is priced as privilege (L5, always held for a human). Pattern
+# based, so a determined agent can obfuscate around it; the tracked fixes are the approval
+# passphrase (Tier 2) and privilege separation (Tier 3).
+KOSHA_ROOT = Path(__file__).resolve().parents[2]
+CONTROL_FILE = re.compile(r"(^|/)kosha(\.demo)?\.(db|yaml)(-wal|-shm|-journal)?$")
+
+
+def _koshad_address() -> re.Pattern:
+    port = re.escape(str(os.environ.get("KOSHAD_PORT") or "8765"))
+    return re.compile(rf"(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|::1)\s*:\s*{port}\b|\bKOSHAD_URL\b")
+
+
+def control_plane_files() -> set[str]:
+    """Absolute paths of the ledger DB (and its sidecars) and the Kosha config in use."""
+    out = set()
+    db = os.environ.get("KOSHA_DB") or str(KOSHA_ROOT / "kosha.db")
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        out.add(os.path.realpath(db + suffix))
+    for cfg in (os.environ.get("KOSHA_CONFIG"), str(KOSHA_YAML)):
+        if cfg:
+            out.add(os.path.realpath(cfg))
+    return out
+
+
+def is_control_plane_path(path: str, cwd: str = "") -> bool:
+    """The ledger DB, Kosha config, anything under a .bob/ dir, or Claude Code settings."""
+    if not path:
+        return False
+    p = abspath(path, cwd) or os.path.normpath(os.path.expanduser(path))
+    parts = Path(p).parts
+    if ".bob" in parts:
+        return True
+    if ".claude" in parts and Path(p).name.startswith("settings"):
+        return True
+    return p in control_plane_files() or bool(CONTROL_FILE.search(p))
+
+
+def names_koshad(text: str) -> bool:
+    return bool(_koshad_address().search(text))
+
+
+def mentions_control_plane(text: str, cwd: str = "") -> bool:
+    """A command line that names the koshad address or a control-plane path."""
+    if _koshad_address().search(text):
+        return True
+    for tok in re.split(r"[\s'\"=;,|&<>()]+", text):
+        if tok and ("/" in tok or "." in tok) and is_control_plane_path(tok, cwd):
+            return True
+    return False
