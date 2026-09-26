@@ -30,13 +30,16 @@ def slow_policy(*args):
     return policy_decide(*args)
 
 
-def race(db, agents, session):
+def race(db, agents, session, same_target=False):
     """Two threads released together, each reserving one L3 (price 10)."""
     barrier = threading.Barrier(len(agents))
     out = [None] * len(agents)
 
     def run(i):
-        a = act(agent=agents[i], session=session)
+        # distinct targets per racer (unless the test wants a collision): same-target
+        # racers are the convergence rule's business, tested separately
+        a = act(agent=agents[i], session=session,
+                argv=("rm", "x.txt" if same_target else f"x{i}.txt"))
         barrier.wait()
         out[i] = db.decide(a, 3, L3_CELL, slow_policy)
 
@@ -101,8 +104,9 @@ def test_settle_success_keeps_spend_failure_refunds(db):
 
 def test_ask_creates_approval_with_bundle_and_approve_once_allows_retry(db):
     # two L3s in window -> third L3 escalates
-    for agent in ("sub1", "sub2"):
-        assert db.decide(act(agent=agent), 3, L3_CELL, policy_decide).decision == "allow"
+    for agent in ("sub1", "sub2"):   # different targets: no convergence, escalation only
+        assert db.decide(act(agent=agent, argv=("rm", f"{agent}.txt")), 3, L3_CELL,
+                         policy_decide).decision == "allow"
     asked = act(agent="sub3", argv=("rm", "y.txt"))
     d = db.decide(asked, 3, L3_CELL, policy_decide)
     assert (d.decision, d.rule) == ("ask", "escalation")
@@ -244,3 +248,68 @@ def test_bundle_shows_the_raw_input_being_approved(db):
     db.decide(db_act("drop table users", agent="a2"), 5, "*|*|priv", policy_decide)
     [ap] = db.pending_approvals()
     assert [b["raw"]["sql"] for b in ap["bundle"]] == ["insert into audit values (1)", "drop table users"]
+
+
+# --- window_touches: the convergence rule sees the window ---
+
+def touch_act(agent, target, tool="edit_file", session="s1"):
+    return Action(action_id=uuid.uuid4().hex, session_id=session, agent_id=agent, harness="bob",
+                  tool=tool, raw={"path": target}, argv=[], cwd="/r", targets=[target],
+                  ts="2026-09-26T00:00:00Z")
+
+
+def test_second_agent_on_the_same_target_is_held(db):
+    assert db.decide(touch_act("sub1", "/r/ci.yml"), 2, "rev|local|nopriv", policy_decide).decision == "allow"
+    d = db.decide(touch_act("sub2", "/r/ci.yml"), 2, "rev|local|nopriv", policy_decide)
+    assert (d.decision, d.rule) == ("ask", "convergence")
+    assert "sub1 already acted on path:/r/ci.yml" in d.reason
+
+
+def test_same_agent_or_different_target_does_not_converge(db):
+    for agent, target in (("sub1", "/r/a.py"), ("sub1", "/r/a.py"), ("sub2", "/r/b.py")):
+        assert db.decide(touch_act(agent, target), 2, "rev|local|nopriv", policy_decide).decision == "allow"
+
+
+def test_pending_actions_count_as_touches(db):
+    # sub1's action is held (L5), not reserved: it must still count
+    assert db.decide(touch_act("sub1", "/r/deploy.sh"), 5, "*|*|priv", policy_decide).decision == "ask"
+    d = db.decide(touch_act("sub2", "/r/deploy.sh"), 2, "rev|local|nopriv", policy_decide)
+    assert (d.decision, d.rule) == ("ask", "convergence")
+
+
+def test_denied_cancelled_and_read_only_actions_do_not_touch(db):
+    a = touch_act("sub1", "/r/x.py")
+    db.decide(a, 2, "rev|local|nopriv", policy_decide)
+    db.settle(a.action_id, "failure")                                   # cancelled
+    db.decide(touch_act("sub1", "/r/y.py"), 0, "rev|local|nopriv", policy_decide)   # L0 read
+    for target in ("/r/x.py", "/r/y.py"):
+        assert db.decide(touch_act("sub2", target), 2, "rev|local|nopriv", policy_decide).decision == "allow"
+
+
+def test_pending_does_not_count_toward_escalation(db):
+    # escalation still reads reserved/confirmed only: two held L5s don't make a third L3 escalate
+    for agent in ("sub1", "sub2"):
+        assert db.decide(touch_act(agent, f"/r/{agent}.sh"), 5, "*|*|priv", policy_decide).decision == "ask"
+    assert db.decide(touch_act("sub3", "/r/other.py"), 3, L3_CELL, policy_decide).decision == "allow"
+
+
+def test_touches_are_oldest_first_and_window_scoped(tmp_path):
+    db = KoshaDB(tmp_path / "w.db", window_minutes=0)                   # every decide rolls the window
+    db.decide(touch_act("sub1", "/r/ci.yml"), 2, "rev|local|nopriv", policy_decide)
+    assert db.decide(touch_act("sub2", "/r/ci.yml"), 2, "rev|local|nopriv", policy_decide).decision == "allow"
+    db2 = KoshaDB(tmp_path / "o.db")
+    for agent in ("sub1", "sub2"):
+        db2.decide(touch_act(agent, f"/r/{agent}.py"), 2, "rev|local|nopriv", policy_decide)
+    db2.decide(touch_act("sub2", "/r/shared.py"), 2, "rev|local|nopriv", policy_decide)
+    db2.decide(touch_act("sub1", "/r/shared2.py"), 2, "rev|local|nopriv", policy_decide)
+    d = db2.decide(Action(uuid.uuid4().hex, "s1", "sub3", "bob", "edit_file", {}, [], "/r",
+                          ["/r/shared.py", "/r/shared2.py"], ""), 2, "rev|local|nopriv", policy_decide)
+    assert "sub2 already acted on" in d.reason                         # the earliest touch wins
+
+
+def test_convergence_cannot_be_raced(tmp_path):
+    # two agents hit the same target at the same instant: exactly one gets through
+    db = KoshaDB(tmp_path / "k.db", agent_cap=1000, fleet_budget=100000)
+    for i in range(200):
+        out = race(db, ["sub1", "sub2"], f"s{i}", same_target=True)
+        assert sorted((d.decision, d.rule) for d in out) == [("allow", "ok"), ("ask", "convergence")], out

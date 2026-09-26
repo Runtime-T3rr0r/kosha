@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
+from kosha.pricing.convergence import touch as convergence_touch
 from kosha.pricing.policy import Decision, LedgerState
 from kosha.pricing.pricing import load_table, price as cell_price
 from kosha.system.action import Action
@@ -158,10 +159,27 @@ class KoshaDB:
                   (amount, session_id, agent_id, FLEET))
 
     def _window_actions(self, c, session_id: str, window_start: str) -> list[sqlite3.Row]:
+        """This window's reserved, confirmed and pending actions, oldest first."""
         return c.execute(
-            "SELECT action_id, agent_id, tool, argv, raw, level, cell, price, status FROM actions "
-            "WHERE session_id=? AND created_at>=? AND status IN ('reserved','confirmed') "
-            "ORDER BY created_at", (session_id, window_start)).fetchall()
+            "SELECT action_id, session_id, agent_id, harness, tool, argv, targets, raw, cwd, level, "
+            "cell, price, status FROM actions WHERE session_id=? AND created_at>=? AND "
+            "status IN ('reserved','confirmed','pending') ORDER BY created_at, rowid",
+            (session_id, window_start)).fetchall()
+
+    @staticmethod
+    def _window_touches(window: list[sqlite3.Row]) -> list:
+        """convergence.touch() per window action, oldest first, rebuilt from the stored
+        columns. Pending (asked) actions count as soon as they are asked (policy.LedgerState)."""
+        touches = []
+        for r in window:
+            stored = Action(action_id=r["action_id"], session_id=r["session_id"],
+                            agent_id=r["agent_id"], harness=r["harness"], tool=r["tool"],
+                            raw=json.loads(r["raw"]), argv=json.loads(r["argv"]), cwd=r["cwd"],
+                            targets=json.loads(r["targets"]), ts="")
+            t = convergence_touch(stored, r["level"])
+            if t is not None:
+                touches.append(t)
+        return touches
 
     # --- events ---
 
@@ -196,6 +214,7 @@ class KoshaDB:
             fleet = self._account(c, action.session_id, FLEET, t)
             agent = self._account(c, action.session_id, action.agent_id, t)
             window = self._window_actions(c, action.session_id, window_start)
+            settled = [r for r in window if r["status"] in ("reserved", "confirmed")]
 
             approved = c.execute(
                 "SELECT id FROM approvals WHERE fingerprint=? AND status IN "
@@ -207,9 +226,11 @@ class KoshaDB:
                              f"(approval #{approved['id']}).", level, cell, p,
                              fleet["spent"] + p, agent["spent"] + p, "ok")
             else:
+                # escalation keeps counting reserved/confirmed only; convergence also sees pending
                 state = LedgerState(fleet_spent=fleet["spent"], fleet_budget=fleet["cap"],
                                     agent_spent=agent["spent"], agent_cap=agent["cap"],
-                                    recent_actions=[(r["agent_id"], r["level"]) for r in window])
+                                    recent_actions=[(r["agent_id"], r["level"]) for r in settled],
+                                    window_touches=self._window_touches(window))
                 d = policy(action, level, cell, state)
 
             status = {"allow": "reserved", "ask": "pending", "deny": "denied"}[d.decision]
@@ -233,7 +254,7 @@ class KoshaDB:
                 bundle = [{"action_id": r["action_id"], "agent_id": r["agent_id"],
                            "tool": r["tool"], "argv": json.loads(r["argv"]),
                            "raw": json.loads(r["raw"]), "level": r["level"], "cell": r["cell"],
-                           "price": r["price"], "status": r["status"]} for r in window]
+                           "price": r["price"], "status": r["status"]} for r in settled]
                 bundle.append({"action_id": action.action_id, "agent_id": action.agent_id,
                                "tool": action.tool, "argv": action.argv, "raw": action.raw,
                                "level": d.level, "cell": d.cell, "price": d.price,
