@@ -93,9 +93,13 @@ def _get(url: str):
     return json.load(urllib.request.urlopen(url, timeout=5))
 
 
+PASSPHRASE = "rehearsal-only-passphrase"
+
+
 def _post(url: str, body: dict):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                 headers={"content-type": "application/json"})
+                                 headers={"content-type": "application/json",
+                                          "X-Kosha-Approval": PASSPHRASE})
     return json.load(urllib.request.urlopen(req, timeout=5))
 
 
@@ -118,7 +122,7 @@ def run(root: Path, out=print) -> list[str]:
     client.KOSHAD_URL = url
 
     db = KoshaDB(world["root"] / "kosha.db")
-    server = uvicorn.Server(uvicorn.Config(create_app(db, guard_root=str(work)), host="127.0.0.1",
+    server = uvicorn.Server(uvicorn.Config(create_app(db, guard_root=str(work), approval_passphrase=PASSPHRASE), host="127.0.0.1",
                                            port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

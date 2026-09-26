@@ -6,8 +6,12 @@ Adapters only call /decide and /settle (through kosha/adapters/client.py).
 from __future__ import annotations
 
 import asyncio
+import getpass
+import hashlib
+import hmac
 import json
 import os
+import sys
 import typing
 import uuid
 from contextlib import asynccontextmanager
@@ -15,7 +19,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -88,8 +92,13 @@ class Resolve(BaseModel):
     note: Optional[str] = None
 
 
-def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None) -> FastAPI:
-    """guard_root (or KOSHA_GUARD_ROOT): working tree fs_guard watches while koshad runs."""
+def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None,
+               approval_passphrase: Optional[str] = None) -> FastAPI:
+    """guard_root (or KOSHA_GUARD_ROOT): working tree fs_guard watches while koshad runs.
+    approval_passphrase: if set, POST /approvals/{id} requires it in the X-Kosha-Approval
+    header (self-approval guard, Tier 2). Only its digest is kept; no endpoint returns it."""
+    approval_digest = (hashlib.sha256(approval_passphrase.encode()).digest()
+                       if approval_passphrase else None)
     table = load_table()
     if db is None:
         db = KoshaDB()
@@ -127,7 +136,12 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None) -
         return db.pending_approvals()
 
     @app.post("/approvals/{approval_id}")
-    def resolve(approval_id: int, r: Resolve) -> dict:
+    def resolve(approval_id: int, r: Resolve,
+                x_kosha_approval: Optional[str] = Header(default=None)) -> dict:
+        if approval_digest is not None:
+            given = hashlib.sha256((x_kosha_approval or "").encode()).digest()
+            if not hmac.compare_digest(given, approval_digest):
+                raise HTTPException(401, "approval passphrase required (X-Kosha-Approval header)")
         out = db.resolve_approval(approval_id, r.decision, r.note)
         if out["status"] == "unknown_approval":
             raise HTTPException(404, "unknown approval")
@@ -157,9 +171,28 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None) -
     return app
 
 
+def ask_passphrase() -> Optional[str]:
+    """Ask the human for the approval passphrase on koshad's own terminal. Never read from
+    an env var or file: an agent running as the same user can read both."""
+    if not sys.stdin.isatty():
+        print("koshad: WARNING: no terminal to ask for an approval passphrase; approvals are "
+              "NOT protected. Start koshad from a terminal to protect them.", file=sys.stderr)
+        return None
+    while True:
+        first = getpass.getpass("Kosha approval passphrase (kept in memory only, empty = none): ")
+        if not first:
+            print("koshad: WARNING: approvals are NOT protected.", file=sys.stderr)
+            return None
+        if getpass.getpass("Repeat it: ") == first:
+            return first
+        print("They didn't match, try again.", file=sys.stderr)
+
+
 def main() -> None:
     import uvicorn
-    uvicorn.run(create_app(), host="127.0.0.1", port=int(os.environ.get("KOSHAD_PORT", 8765)))
+    passphrase = ask_passphrase()
+    uvicorn.run(create_app(approval_passphrase=passphrase), host="127.0.0.1",
+                port=int(os.environ.get("KOSHAD_PORT", 8765)))
 
 
 if __name__ == "__main__":
