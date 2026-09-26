@@ -352,8 +352,8 @@ def test_convergence_asks_regardless_of_budget_headroom():
     s.window_touches = [touch(first, 4)]
     d = decide(later, 2, "rev|local|nopriv", s)
     assert (d.decision, d.rule) == ("ask", "convergence")
-    assert "path:deploy.yaml" in d.reason and "agent-1" in d.reason
-    assert d.suggestion and "path:deploy.yaml" in d.suggestion
+    assert "path:/repo/deploy.yaml" in d.reason and "agent-1" in d.reason
+    assert d.suggestion and "path:/repo/deploy.yaml" in d.suggestion
     assert (d.fleet_after, d.agent_after) == (0, 0)          # an ask charges nothing
 
 
@@ -381,7 +381,7 @@ def test_pending_ask_counts_as_touch():
     later = act(["rm", "-rf", "logs"], agent_id="agent-2")
     d2 = decide(later, 3, "irrev|local|nopriv", ledger)
     assert (d2.decision, d2.rule) == ("ask", "convergence")
-    assert "path:logs" in d2.reason
+    assert "path:/repo/logs" in d2.reason
 
     allowed_only = state(fleet_budget=1e9, agent_cap=1e9)      # ask never recorded
     assert decide(later, 3, "irrev|local|nopriv", allowed_only).rule == "ok"

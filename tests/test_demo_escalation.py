@@ -137,7 +137,7 @@ def test_convergence_asks_when_sub3_migrates_the_file_sub2_edited(budgets):
     assert i == 4
     d = decisions[4]
     assert (d.decision, d.rule) == ("ask", "convergence")
-    assert "path:migrations/013_release.sql" in d.reason and "sub2" in d.reason
+    assert "path:/repo/migrations/013_release.sql" in d.reason and "sub2" in d.reason
     assert spent == 2 + 30 + 2 + 30
 
 

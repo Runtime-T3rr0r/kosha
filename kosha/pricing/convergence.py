@@ -34,6 +34,7 @@ MIN_LEVEL = 2               # read-only (L0) and blocked (L1) actions touch noth
 SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
 REDIRECTS = {">", ">>", "1>", "2>", "&>", "__redirect__"}
 SHELLS = {"sh", "bash", "zsh", "dash"}
+FILE_KINDS = {"path", "patch"}
 PATH_WRITERS = {"rm", "rmdir", "cp", "mv", "touch", "mkdir", "tee", "truncate", "ln"}
 GIT_BRANCH_CMDS = {"push", "checkout", "switch", "branch", "merge", "rebase"}
 NOT_A_BRANCH = re.compile(r"^(HEAD|FETCH_HEAD|ORIG_HEAD|@)([~^]\d*)*$|^[0-9a-f]{7,40}$")
@@ -207,8 +208,16 @@ def segment_targets(argv: list[str], cwd: str = "") -> set[str]:
     elif cmd == "docker":
         out |= _docker(args)
     elif cmd in PATH_WRITERS | {"chmod", "chown", "chgrp", "sed"}:
-        out |= {t if not t.startswith("path:") else f"path:{norm_path(t[5:], cwd)}" for t in _paths(cmd, args)}
-    return {t for t in out if _valid(t)}
+        out |= _paths(cmd, args)
+    return {_resolve(t, cwd) for t in out if _valid(t)}
+
+
+def _resolve(target: str, cwd: str) -> str:
+    """File targets (path:, patch:) resolved against cwd, so a relative path in a
+    command and the absolute path a file tool sends name the same file. Every
+    extractor above normalises without cwd; this is the one place cwd is applied."""
+    kind, value = target.split(":", 1)
+    return f"{kind}:{norm_path(value, cwd)}" if kind in FILE_KINDS else target
 
 
 def _valid(target: str) -> bool:
@@ -230,16 +239,18 @@ def command_targets(command: str, cwd: str = "") -> set[str]:
 
 
 def targets_of(action: Action) -> frozenset[str]:
-    """Action.targets (file-tool paths) plus targets extracted from the command."""
+    """Action.targets (file-tool paths) plus targets extracted from the command, with
+    relative file paths in either resolved against action.cwd."""
     out = set()
+    cwd = getattr(action, "cwd", "") or ""
     for t in action.targets or []:
-        out.add(t if ":" in t.split("/", 1)[0] else f"path:{norm_path(t)}")
+        out.add(t if ":" in t.split("/", 1)[0] else f"path:{norm_path(t, cwd)}")
     raw = action.raw or {}
     command = raw.get("command")
     if not command and action.argv:
         command = shlex.join(action.argv)
     if command:
-        out |= command_targets(str(command))
+        out |= command_targets(str(command), cwd)
     if raw.get("db"):
         out.add(f"db:{raw['db']}")
     return frozenset(out)
