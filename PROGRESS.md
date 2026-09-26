@@ -455,5 +455,32 @@ Full suite: 760 passed.
   - **Needs a reload in Bob to take effect:** restart the kosha MCP servers (for tool descriptions) and reload modes (for role text), then use new tabs.
 - Also seen: one agent mentioned "the tool is warning me that repeated identical calls won't produce different results". That's Bob's own repeated-call warning, not Kosha.
 
+## 2026-09-27: task 11 done (scripted demo)
+
+- **`demo_repo/rehearse.py`:** plays the demo storyline deterministically in a throwaway world (never touches `.demo/`), through the real kosha-mcp `Gateway` code into a real koshad on a free port with fs_guard on. It prints each beat and **exits 1 if any beat differs from the script**. Run it before every recording.
+- **The story** (every step reasonable alone):
+  - allowed: version bump, changelog, flaky-test fix, tests, a prod read
+  - `test-fix` removes CI's "slow integration check" (L4, allowed alone)
+  - `release-bump` commits and pushes `main` (L4, allowed alone)
+  - **`test-fix` pushes `main` → held, `convergence`**
+  - **`migrate-deploy` migrates prod → held, `escalation`**, with a bundle showing the CI removal, the commit and the push
+  - the human, via curl: **deny** the duplicate push, **approve_reset** the migration
+  - the migration retry runs, then **deploy to prod is allowed** in the fresh window
+
+  Rehearsal result: all 12 beats as scripted, **0 fs_guard bypass events** across the fully gated run (no false positives).
+- **`demo_repo/DEMO.md`:** the recording run sheet. It covers pre-flight (rehearse, reset, start koshad, Bob trust/reload/new tabs), **the exact prompt per tab in send order** (tabs 1 and 2 together, tab 3 after they finish), the Kosha response to expect at each beat, the curl approvals, narration lines, and what to do if an agent goes off-script (fallback: run the rehearsal on camera).
+- **`demo_repo/show_bundle.py`:** read-only pretty-printer for `curl -s localhost:8765/approvals`, so the bundle is legible on camera. Approving stays plain curl.
+- **Fix needed for the real Bob run:** the generated `mcp.json` now puts the venv first on kosha-mcp's `PATH`. Otherwise an agent's `python -m pytest` runs a Python without the demo app's dependencies.
+- **Rehearsal bug found and fixed:** it stopped koshad without waiting, so the temp-dir cleanup ran while fs_guard was still live (the same race class as the earlier reset bug). It now joins the server thread first.
+- **Constraints honoured:**
+  - no secrets anywhere
+  - fresh ledger before recording (DEMO.md step 0)
+  - no fs_guard beat staged, and nothing runs over ~1s
+  - the collision uses the same form for both agents (`git push main`), sidestepping the pending `targets_of` cwd gap
+  - never "subagents"
+  - `batch_id` is **not needed**: no beat chains destructive commands
+- **Tests:** `tests/test_demo_scenario.py` runs the full rehearsal and asserts the key beats (convergence hold, escalation hold, deploy allowed), and checks `show_bundle.py` on real approval output. **If a pricing change breaks a demo beat, the suite fails.** Full suite: 855 passed.
+- **Not verified:** the Bob-driven run of this exact script. Agents may take the steps in a different order or add steps. DEMO.md orders the sends to keep the shape, and the held beats don't depend on which of the two pushers goes second.
+
 ## Next (task 11 onward), not started
-demo scenario → web/.
+web/ (dashboard; approvals stay curl for the demo).

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import sqlite3
@@ -135,7 +136,9 @@ def kosha_config(root: Path, work: Path) -> Path:
 def bob_config(root: Path, work: Path, config: Path) -> None:
     bob = work / ".bob"
     bob.mkdir()
-    env = {"KOSHA_CONFIG": str(config), "DEMO_PROD_DB": str(root / "prod.db")}
+    # the venv first on PATH: agents' `python -m pytest` needs the demo app's deps
+    env = {"KOSHA_CONFIG": str(config), "DEMO_PROD_DB": str(root / "prod.db"),
+           "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}"}
     servers = {f"kosha-{slug}": {
         "command": str(VENV_BIN / "kosha-mcp"),
         "args": ["--agent", slug, "--session", SESSION, "--workspace", str(work)],
