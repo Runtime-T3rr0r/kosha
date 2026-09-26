@@ -396,5 +396,22 @@ Full suite: 760 passed.
 - **Pricing-track gap:** `bash deploy.sh prod` matches `opaque_script` (L3, local), while `./deploy.sh prod` matches `deploy_trigger` (L4). The same deploy wrapped in `bash` is under-priced. The demo uses the `deploy` tool (always L4), so it isn't affected.
 - **Untested live:** how the three modes run in parallel in Bob (three parallel tasks, one per mode, is the assumption). Bob's `spawn_subagent` uses presets, and I haven't verified whether a custom mode can be spawned as a subagent.
 
+## 2026-09-27: Pre-task-11 checks
+
+**The approval phrase is now neutral.** The held next-step line no longer says "Kosha dashboard", which didn't exist. It now reads: *"Once the user says a human has approved it in Kosha, retry this exact call with the same arguments."* That holds whether approval happens in a future dashboard or via `POST /approvals/<id>`, so it doesn't pre-empt the dashboard-vs-curl decision, which is still open. A test asserts the held text never mentions a dashboard.
+
+**Bob concurrency, from source (Bob 1.126.0+bob2.2.0). Not verified live:**
+- **Top-level tasks: concurrency is probable, not proven.** "New Task in Editor" (`bob-code.task.pickWorkspaceInEditor`) opens each task in its own editor panel: a separate webview created with `retainContextWhenHidden: true`, so a hidden tab keeps running. Each task is its own object. No global task lock or queue was found; the only serial queue in the extension belongs to `FindingsManager`, which handles review findings, not agent tasks. Not proven: that three model calls actually run in parallel (a server-side quota or serialisation isn't visible in the client).
+- **`spawn_subagent` is NOT viable for the kosha fleet:**
+  1. the fleet modes lack the `subagent` group, so it isn't offered;
+  2. even if added, `createSubTask` builds the subagent's tools with `getToolsForGroups(parentGroups)`, which leaves out the mode slug, so **a spawned subagent never receives its mode's slug-pinned kosha tools**;
+  3. a "general" subagent reuses the parent's mode id, so it would share the parent's identity anyway.
+  Built-in presets are only `explore`.
+- **So the demo fleet is three top-level tasks, one per mode, each in its own editor tab**, all on kosha session `release-1.3` (set by `--session` on every kosha-mcp instance, independent of Bob's per-task `rootTaskId`).
+- **Pitch consequence:** this demonstrates Bob's parallel *tasks* across custom modes, not Bob's `spawn_subagent`. Making spawned subagents work would need the kosha servers to be visible without the slug, which breaks the verified isolation. Not doing that.
+- **Two-minute live check before scripting task 11:** open the three modes in three editor tabs, send each a prompt back to back, and confirm on `/stream` that actions from the three agent ids interleave with overlapping timestamps.
+
+**koshad restarted on current code:** stale pid 91316 stopped. `setup_demo.py` built a fresh `.demo/`, and `.demo/start_koshad.sh` runs as pid 183874 on 127.0.0.1:8765, with env `KOSHA_DB=.demo/kosha.db`, `KOSHA_CONFIG=.demo/kosha.demo.yaml`, `KOSHA_GUARD_ROOT=.demo/work` and `KOSHA_GUARD_SESSION=release-1.3`. A made-up-token probe was hard-denied (current code); its rows were removed, and the ledger is empty. **Order to reset before recording:** stop koshad → run `setup_demo.py` → start `.demo/start_koshad.sh`. Rebuilding while koshad runs deletes its open DB.
+
 ## Next (task 11 onward), not started
 demo scenario → web/.
