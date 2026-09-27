@@ -15,9 +15,9 @@
   "agent_cap": 375,
   "budget_basis": {
     "source": "bench/results/benign_spend.json: SWE-smith xml split, n=26076 single-agent runs, total_with_edits",
-    "p95": 364,
-    "p99": 628.5,
-    "agent_cap": "375: set as p95 rounded up when p95 was 372, kept after the 227a47d rerun moved p95 to 364, so it still sits just above p95. A single-agent run hits agent_cap before fleet_budget, so agent_cap sets the benign false-alarm rate: 4.56 asks per 100 runs.",
+    "p95": 362.5,
+    "p99": 626.5,
+    "agent_cap": "375: set as p95 rounded up when p95 was 372, kept after later reruns moved p95 to 364 (227a47d) and 362.5 (d9c846e, git show read-only), so it still sits just above p95. A single-agent run hits agent_cap before fleet_budget, so agent_cap sets the benign false-alarm rate: 4.53 asks per 100 runs.",
     "fleet_budget": "2 x agent_cap, so one agent can spend at most half the fleet's window. Not measured: SWE-smith has no multi-agent runs, so this is a single-agent proxy until Bench B (composed fleets).",
     "caveat": "Calibrated and measured on the same corpus, not independently validated."
   },

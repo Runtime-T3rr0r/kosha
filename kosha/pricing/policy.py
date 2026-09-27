@@ -191,8 +191,9 @@ def escalation_threshold(recent_actions: list[tuple], agent_id: Optional[str] = 
 
     One distinct agent -> L4. Two or more -> L3. On benign single-agent SWE-smith runs
     (bench/benign_spend.py, n=26076, bash commands only) the rule asked in 95.21 of
-    100 sessions before this split and 7.64 after. Most of that drop is the threshold
-    itself: with the same effects table, L3+ still asks in 91.19 of 100, driven by
+    100 sessions before this split (effects table as of d77c6af) and asks in 6.99 with
+    the current table. Most of that drop is the threshold itself: with the current
+    table, an L3+ threshold for one agent would still ask in 91.16 of 100, driven by
     routine L3 work (local scripts, rm of scratch files). For one agent L3+ is noise;
     consequential actions spread across several agents are the cross-agent signal
     the rule exists for, and keep the L3+ threshold.
