@@ -17,12 +17,20 @@ cd ~/Repos/kosha
 python demo_repo/rehearse.py          # must end with "== REHEARSAL OK"
 kill $(ss -ltnp | grep ':8765 ' | grep -o 'pid=[0-9]*' | cut -d= -f2); while ss -ltn | grep -q ':8765 '; do sleep 0.5; done
 .venv/bin/python demo_repo/setup_demo.py
-.demo/start_koshad.sh                 # terminal 1: leave it running
+.demo/start_koshad.sh                 # terminal 1: asks for an approval passphrase; leave it running
 ```
+
+koshad asks for an **approval passphrase** on its own terminal and keeps it only in memory.
+Approving needs it; the agents can't read it from anywhere, so they can't approve themselves.
 
 `rehearse.py` plays this exact story against current pricing in a throwaway world. If it
 fails, a pricing change broke a beat: don't record until it's green.
 
+- One-time: install the Kosha extension for Bob (then **Developer: Reload Window**):
+  ```sh
+  python kosha/adapters/bob_extension/build_vsix.py && bob --install-extension dist/kosha-bob-0.1.0.vsix
+  ```
+  The status bar shows `Kosha: 0 held · …` once koshad is up.
 - One-time Bob setting (already done on this machine): `~/.bob/settings/settings.json` has
   `"mcp"` in `approval.allowed_permissions`, otherwise Bob asks before every Kosha call.
 - In Bob: open `~/Repos/kosha/.demo/work`, **trust** it, then `Ctrl+Shift+P` →
@@ -65,31 +73,43 @@ Release 1.3 is ready. Check how many users prod has, then apply the pending migr
 unreviewed change that removed a CI check, and a push to main. Per-action approval would say
 yes to each of these. Kosha looks at what the fleet did together, and holds it."
 
-## 3. The human reviews the bundle (terminal 2)
+## 3. The human reviews and approves, on the Kosha approval panel (inside Bob)
 
-```sh
-curl -s localhost:8765/approvals | python3 demo_repo/show_bundle.py
-```
+**Nothing to open:** the moment an action is held, the Kosha extension opens the **Kosha
+approvals** panel beside the editor (without taking focus), shows a notification ("Kosha held
+test-fix: git push origin main (convergence)", **Review**), and the status bar turns amber
+(`Kosha: 2 held · fleet …`). The first time, type the passphrase and click **Unlock**; the
+panel stays unlocked while it's open, and it's kept in the panel's memory only. You can also
+open it any time from the status bar or `Ctrl+Shift+P` → **Kosha: Open Approvals**.
 
-You'll see two held items. The migration's list shows the whole window: the CI step removed,
-the commit, the push to main, then the held migration.
+The page shows both held actions live: what's held, **why** (the rule and Kosha's reason), the
+fleet's spend, and the **bundle** (everything the fleet did this window, in order). The
+migration's bundle shows the CI step removed, the commit, the push to main, then the held
+migration. Agents can show the same list in chat: "Show me what Kosha is holding"
+(`kosha_review`, read-only). Only the page can approve.
 
-Deny the duplicate push, then approve the migration and reset the window. **Use the ids
-`show_bundle.py` printed**; the ones below are what a fresh run gives:
+- On the **test-fix push**: type the note `main was already pushed`, click **Deny**.
+- On the **prod migration**: click **Approve & reset window**.
 
-```sh
-curl -s -X POST localhost:8765/approvals/1 -H 'content-type: application/json' -d '{"decision":"deny","note":"main was already pushed"}'
-curl -s -X POST localhost:8765/approvals/2 -H 'content-type: application/json' -d '{"decision":"approve_reset"}'
-```
+The line under the passphrase box confirms each decision and says which agent to tell to retry.
 
 *Narration:* "The human sees the whole bundle, not one command in isolation. The duplicate
-push gets denied. The migration gets approved, and the window resets."
+push gets denied. The migration gets approved, and the window resets. Only the human can do
+this: approving needs a passphrase the agents never see."
+
+**Fallback (terminal 2), if the page misbehaves:**
+```sh
+curl -s localhost:8765/approvals | python3 demo_repo/show_bundle.py
+read -rs KOSHA_PASS    # the approval passphrase; silent, not in shell history
+curl -s -X POST localhost:8765/approvals/1 -H 'content-type: application/json' -H "X-Kosha-Approval: $KOSHA_PASS" -d '{"decision":"deny","note":"main was already pushed"}'
+curl -s -X POST localhost:8765/approvals/2 -H 'content-type: application/json' -H "X-Kosha-Approval: $KOSHA_PASS" -d '{"decision":"approve_reset"}'
+```
 
 ## 4. Finish (tab 3)
 
 Type in tab 3:
 ```
-Approved in Kosha. Retry the migration, then deploy.
+Now retry the migration exactly as before, then deploy.
 ```
 
 **Expect:** the migration retry runs, and the deploy to prod is allowed in the fresh window:

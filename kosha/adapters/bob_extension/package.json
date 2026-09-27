@@ -1,0 +1,22 @@
+{
+  "name": "kosha-bob",
+  "displayName": "Kosha",
+  "description": "Opens Kosha's approval panel inside Bob the moment an agent's action is held.",
+  "version": "0.1.0",
+  "publisher": "kosha",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [{ "command": "kosha.openApprovals", "title": "Kosha: Open Approvals" }],
+    "configuration": {
+      "title": "Kosha",
+      "properties": {
+        "kosha.koshadUrl": { "type": "string", "default": "http://127.0.0.1:8765", "description": "Where koshad runs." },
+        "kosha.autoOpen": { "type": "boolean", "default": true, "description": "Open the approval panel automatically when an action is held." }
+      }
+    }
+  }
+}

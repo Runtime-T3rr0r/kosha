@@ -71,7 +71,7 @@ def test_prod_is_one_migration_behind_dev(demo):
 
 
 def test_exactly_the_flaky_test_fails(demo):
-    p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+    p = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--color=no"],
                        cwd=demo["work"], capture_output=True, text=True)
     assert "1 failed, 3 passed" in p.stdout and "test_health_is_fast" in p.stdout
 
