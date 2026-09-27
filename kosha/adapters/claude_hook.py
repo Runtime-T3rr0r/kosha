@@ -189,7 +189,27 @@ def build_action(payload: dict):
                   cwd=cwd, targets=targets, ts=datetime.now(timezone.utc).isoformat())
 
 
+IDENTITY_FIELD = "_kosha_agent"   # the tab's identity, stamped onto kosha-mcp tool calls
+
+
+def stamp_identity(payload: dict) -> None:
+    """A call to Kosha's own MCP tools from a Bob tab: kosha-mcp gates it, so the hook
+    decides nothing. It adds the tab's identity to the arguments (Bob applies a PreToolUse
+    `updatedInput`), overwriting any value the agent put there, and allows the call."""
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    agent, _ = bob_identity(payload)
+    out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+                                  "updatedInput": {**tool_input, IDENTITY_FIELD: agent}}}
+    try:
+        os.write(1, json.dumps(out).encode())     # the entire stdout: Bob ignores anything else
+    except OSError:
+        pass
+    _exit(0)
+
+
 def pre_tool_use(payload: dict) -> None:
+    if (payload.get("tool_name") or "").startswith(KOSHA_MCP_PREFIX) and harness_of(payload) == "bob":
+        stamp_identity(payload)
     action = build_action(payload)
     if action is None:
         _exit(0)

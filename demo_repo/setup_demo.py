@@ -10,8 +10,8 @@ Creates, under --root (default <kosha>/.demo, gitignored), wiping any previous d
   kosha.demo.yaml    Kosha DB aliases: dev (local), prod (shared)
   kosha.db       fresh ledger: nothing from earlier runs shows up on the dashboard
   start_koshad.sh    starts koshad with the demo DB, config and fs_guard on work/
-  work/.bob/     Bob config: the "Kosha" mode, and kosha-hook on Bob's native shell/edit
-                 tools (each tab is its own agent; held calls wait for the human)
+  work/.bob/     Bob config: the "Kosha" mode with one kosha-mcp server (Kosha's tools only,
+                 never prompted by Bob), and kosha-hook on Bob's native tools for other modes
   work/.venv     link to Kosha's Python environment (the demo app's tests need it)
 
 Every path is local. No secrets are created or needed. Any secret-like string used in
@@ -48,14 +48,16 @@ MODE = "kosha"
 ROLE = """You are an agent working in this repository alongside other agents (other Bob tabs), all governed by Kosha. Kosha prices each command and file edit by its risk against one budget shared by all of them, and holds risky steps for a human to approve. Read-only steps (reading files, status, logs, running tests) are free. Do not ration, skip or refuse normal work to save budget: deciding what is too risky is Kosha's job, not yours. Just do the work the user asks for and follow Kosha's answer.
 
 Rules:
-1. Use your normal tools for commands and edits. Kosha checks every one before it runs. Never reach an effect Kosha held or denied another way (scripts, other tools, other files).
+1. Do all commands, file edits, git, database and deploy work through your Kosha tools: mcp__kosha__run_command, edit_file, write_file, git, db_exec, deploy. Kosha checks each call before it runs. Never reach an effect Kosha held or denied another way (scripts, other tools, other files).
 2. When a step needs human approval, the tool call simply waits while a human reviews it, possibly for minutes. That is normal: wait for it. You then get the real result and carry on, or a result starting "KOSHA DENIED BY A HUMAN" with the human's note, in which case don't retry: tell the user and re-plan. If a result starts with "KOSHA HELD FOR HUMAN APPROVAL", nobody decided in time and nothing ran: tell the user which step is waiting and why, and when they say it is approved, retry the exact same call with the same arguments.
 3. A result that starts with "KOSHA DENIED" means nothing ran and retrying the same call will be denied again. Follow the suggestion in the message, or ask the user.
 4. A result that starts with "KOSHA UNAVAILABLE" means Kosha could not decide and nothing ran. Tell the user, and retry the same call once they say Kosha is back.
 5. Never report a held, denied or unavailable step as done, and never try to approve a held step yourself: only the human does that, on the Kosha approval panel.
-6. This project's Python environment is ./.venv: run Python with .venv/bin/python (e.g. `.venv/bin/python -m pytest -q`)."""
-# Bob's native tools, plus the to-do list; no `mode` group, so tabs stay in this mode
-MODE_GROUPS = ["read", "edit", "execute", "todo"]
+6. mcp__kosha__kosha_review shows what is held and why (read-only)."""
+# Kosha's tools only (mcp): no native edit/execute, so every step goes through Kosha and Bob
+# never asks; plus reading and the to-do list. No `mode` group, so tabs stay in this mode.
+MODE_GROUPS = ["read", "todo", "mcp"]
+KOSHA_TOOLS = ["run_command", "edit_file", "write_file", "git", "db_exec", "deploy", "kosha_review"]
 
 HOOK_WAIT = 1500   # seconds a held native Bob call waits for the human
 NATIVE_MATCHER = "^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$"
@@ -134,6 +136,18 @@ def kosha_config(root: Path, work: Path) -> Path:
 def bob_config(root: Path, work: Path, config: Path) -> None:
     bob = work / ".bob"
     bob.mkdir()
+    # one kosha-mcp for the mode; each tab's identity is stamped onto its calls by the
+    # global kosha-hook (make bob-install), else every tab is the agent "kosha"
+    env = {"KOSHA_CONFIG": str(config), "DEMO_PROD_DB": str(root / "prod.db"),
+           "KOSHA_APPROVAL_WAIT": "1500",   # s a held call waits for the human
+           "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}"}
+    server = {"command": str(VENV_BIN / "kosha-mcp"),
+              "args": ["--agent", MODE, "--session", SESSION, "--workspace", str(work)],
+              "env": env,
+              "groups": [MODE],            # only the Kosha mode sees these tools
+              "alwaysAllow": KOSHA_TOOLS,  # Bob never asks: Kosha decides
+              "timeout": 1800000}          # ms: a held call waits for the human (Bob's default 60s)
+    (bob / "mcp.json").write_text(json.dumps({"mcpServers": {"kosha": server}}, indent=2) + "\n")
     mode = {"slug": MODE, "name": "Kosha", "roleDefinition": ROLE, "groups": MODE_GROUPS}
     (bob / "custom_modes.yaml").write_text(
         yaml.safe_dump({"customModes": [mode]}, sort_keys=False, width=100, allow_unicode=True))
@@ -198,8 +212,7 @@ def main(argv: list[str] | None = None) -> None:
           f"  1. start koshad:   {out['start']}\n"
           f"  2. open in Bob:    {out['work']}  (trust the workspace; Developer: Reload Window)\n"
           f"  3. open 3 tabs (New Task in Editor) in the \"Kosha\" mode; each is its own agent (fleet {SESSION})\n"
-          f"  prerequisite: Bob auto-approve on for Read, Edit, Execute, Todo (Kosha decides),\n"
-          f"                or Bob asks you before every step as well.")
+          f"  one-time: make bob-install (per-tab identity on Kosha's tools; Bob auto-approve for them)")
 
 
 if __name__ == "__main__":

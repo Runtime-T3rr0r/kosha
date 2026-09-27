@@ -26,18 +26,19 @@ Approving needs it; the agents can't read it from anywhere, so they can't approv
 `rehearse.py` plays this exact story against current pricing in a throwaway world. If it
 fails, a pricing change broke a beat: don't record until it's green.
 
-- One-time: install the Kosha extension for Bob (then **Developer: Reload Window**):
+- One-time (already done on this machine), then **Developer: Reload Window**:
   ```sh
-  python kosha/adapters/bob_extension/build_vsix.py && bob --install-extension dist/kosha-bob-0.1.0.vsix
+  make bob-install   # Bob global: stamps each tab's identity on Kosha's tools; auto-approves them
+  make extension     # the Kosha panel, pop-ups and status bar
   ```
   The status bar shows `Kosha: 0 held · …` once koshad is up.
-- One-time Bob setting (already done on this machine): `~/.bob/settings/settings.json` has
-  `"mcp"` in `approval.allowed_permissions`, otherwise Bob asks before every Kosha call.
 - In Bob: open `~/Repos/kosha/.demo/work`, **trust** it, then `Ctrl+Shift+P` →
   **Developer: Reload Window**. Close any old task tabs.
-- Open 3 tabs with **New Task in Editor**, and set each to the **Kosha** mode. Each tab is
-  its own agent to Kosha automatically (the panel shows them as `bob-<task id>`); they share
-  one fleet. Below, "the release tab", "the test tab" and "the migrate tab" are just tabs 1-3.
+- Wait a few seconds after the reload (Kosha's tool server has to connect), then open 3 tabs
+  with **New Task in Editor** and set each to the **Kosha** mode. Nothing else to configure:
+  in this mode every step goes through Kosha's own tools, which Bob never asks about, so
+  **Kosha alone decides**. Each tab is its own agent to Kosha automatically (the panel shows
+  them as `bob-<task id>`); they share one fleet. Below, "the release tab", "the test tab" and "the migrate tab" are just tabs 1-3.
 
 ## 1. Tabs 1 and 2 (send both, back to back)
 

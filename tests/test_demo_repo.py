@@ -110,17 +110,35 @@ def test_reset_rebuilds_from_scratch(tmp_path):
 
 # --- Bob config, checked against Bob's own rules ---
 
-def test_one_kosha_mode_with_native_tools_and_the_gating_rules(demo):
+def test_one_kosha_mode_on_kosha_tools_and_the_gating_rules(demo):
     modes = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
     assert [m["slug"] for m in modes] == ["kosha"]
     m = modes[0]
     assert re.fullmatch(r"[a-zA-Z0-9-]+", m["slug"]) and m["name"]           # Bob's mode schema
-    assert set(m["groups"]) == {"read", "edit", "execute", "todo"}            # native tools; no mode switching
+    assert set(m["groups"]) == {"read", "todo", "mcp"}                         # no native edit/execute
     role = m["roleDefinition"]
-    for tag in ("KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED BY A HUMAN", "KOSHA UNAVAILABLE",
-                "retry the exact same call", "never try to approve a held step yourself"):
+    for tag in ("mcp__kosha__run_command", "KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED BY A HUMAN",
+                "KOSHA UNAVAILABLE", "retry the exact same call", "never try to approve a held step yourself"):
         assert tag in role
-    assert not (demo["work"] / ".bob" / "mcp.json").exists()                 # identity comes from the hook
+
+
+def test_one_kosha_server_pinned_to_the_mode_and_never_prompted(demo):
+    servers = json.loads((demo["work"] / ".bob" / "mcp.json").read_text())["mcpServers"]
+    assert set(servers) == {"kosha"}
+    e = servers["kosha"]
+    assert e["groups"] == ["kosha"] and set(e["alwaysAllow"]) == set(setup_demo.KOSHA_TOOLS)
+    args = e["args"]
+    assert args[args.index("--session") + 1] == setup_demo.SESSION
+    assert e["timeout"] / 1000 >= int(e["env"]["KOSHA_APPROVAL_WAIT"]) + 270
+    assert len(bob_tool_id("kosha", "kosha_review")) <= 64
+    from mcp import Client
+    from mcp.client.stdio import StdioServerParameters
+
+    async def tools():
+        params = StdioServerParameters(command=e["command"], args=e["args"], env={**os.environ, **e["env"]})
+        async with Client(params) as c:
+            return {t.name for t in (await c.list_tools()).tools}
+    assert asyncio.run(tools()) == set(setup_demo.KOSHA_TOOLS)
 
 
 def test_venv_link_lets_agents_run_the_app_tests(demo):

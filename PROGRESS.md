@@ -562,6 +562,25 @@ A well-meaning agent told "this needs approval in Kosha" might try exactly this.
   - Found while doing it: Bob's native shell doesn't have Kosha's venv on PATH (kosha-mcp used to add it), so `python -m pytest` would fail on camera. `setup_demo.py` now links `work/.venv` to Kosha's environment (gitignored), and the role tells agents to use `.venv/bin/python`. Tested: the link runs the app's tests.
   - **The rehearsal still drives the story through kosha-mcp** with named agents. That checks pricing and policy, which are identical on either path. The hook path has its own tests, including Bob's hook runner.
   - **Not yet verified live:** the hook actually firing inside Bob for a native edit. Pending the user's run.
+- **Kosha mode back on Kosha's own tools, with per-tab identity stamped by a global hook (2026-09-27, after the live run).**
+  - **Live findings that forced it:**
+    1. The native-tool path **never reached koshad**: 0 events while the agent "edited 2 files", although the hook config was in place and `~/Repos/kosha` is on Bob's trust list. **Bob didn't run the workspace hook**, cause unknown.
+    2. Bob's "Execute" auto-approve covers only commands on its prefix allow-list (`cat`, `git log`, ...), so `git add && git commit` prompts regardless. **Native tools can't be made prompt-free.**
+  - **Now:**
+    - The `kosha` mode is `read, todo, mcp` with **one kosha-mcp server** pinned to it (`groups: [kosha]`, `alwaysAllow` all its tools, 30 min timeout): **Bob never asks; Kosha alone decides; held calls wait in the chat.** This path is proven live.
+    - **Per-tab identity** comes from a **global** PreToolUse hook matching only `^mcp__kosha__`. kosha-hook returns `updatedInput` with `_kosha_agent: bob-<task id>` (overwriting any agent-written value), and kosha-mcp uses it (format-checked; otherwise it uses the instance name). The stamp needs no koshad and gates nothing, so it can't break other projects.
+    - Installed by **`make bob-install`** (`kosha/adapters/bob_install.py`: backup, idempotent, keeps other settings, also ensures `mcp`/`todo` auto-approve); **`make bob-uninstall`** removes only our entry. **Installed on this machine.**
+    - Without the hook, everything still works with all tabs as one agent, `kosha`.
+  - **Tests:**
+    - the stamp: output format, forged value overwritten, no koshad needed
+    - **Bob's own hook runner applies it** (its `updatedInput` carries the stamp; native tools untouched)
+    - kosha-mcp honours valid stamps and ignores malformed ones, and never puts the stamp in `raw`
+    - two stamped tabs on one server converge
+    - an approved retry from the same tab matches
+    - installer: idempotent, keeps others, backs up, Bob's strict schema; uninstall removes only ours
+    - demo config: one mode on Kosha tools, one pinned, never-prompted server that launches with the 7 tools
+    - Suite: 952 passed.
+  - **Not verified live:** that real Bob applies the `updatedInput` to an MCP call. The source path is `P2r`: `if (m?.updatedInput) n.arguments = m.updatedInput`, before the tool runs. Check in the run: the panel should show `bob-…` names, not `kosha`.
 - **OpenCode:** never built (the stretch goal, last in the cut order).
 
 ## Next (task 11 onward), not started

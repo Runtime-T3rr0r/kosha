@@ -3,7 +3,7 @@ PY    := .venv/bin/python
 PORT  ?= 8765
 .DEFAULT_GOAL := help
 
-.PHONY: help start start-keep stop reset status rehearse test extension
+.PHONY: help start start-keep stop reset status rehearse test extension bob-install bob-uninstall
 
 help:  ## list the commands
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
@@ -45,3 +45,9 @@ test:  ## run the full test suite
 extension:  ## build the Kosha extension and install it into Bob (then Reload Window)
 	@$(PY) kosha/adapters/bob_extension/build_vsix.py
 	@bob --install-extension dist/kosha-bob-$$($(PY) -c "import json;print(json.load(open('kosha/adapters/bob_extension/package.json'))['version'])").vsix
+
+bob-install:  ## one-time: Bob global hook for per-tab identity on Kosha's tools + auto-approve them (backed up)
+	@$(PY) -m kosha.adapters.bob_install install
+
+bob-uninstall:  ## remove the Kosha hook from Bob's global settings (backed up)
+	@$(PY) -m kosha.adapters.bob_install uninstall

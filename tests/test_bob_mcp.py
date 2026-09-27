@@ -457,3 +457,37 @@ def test_waiter_keeps_waiting_while_koshad_is_briefly_down(monkeypatch):
     start = time.monotonic()
     assert client.wait_for_human("x", wait=0.6, poll=0.1) is None
     assert time.monotonic() - start >= 0.5 and calls["n"] >= 3                # it kept trying
+
+
+
+# --- per-tab identity stamped by kosha-hook ---
+
+def test_stamped_identity_is_the_agent(live_koshad, ws):
+    g = Gateway("kosha", "fleet1", str(ws), approval_wait=0)
+    g.call("run_command", raw({"command": "echo a", "_kosha_agent": "bob-f9d25337"}))
+    g.call("run_command", raw({"command": "echo b", "_kosha_agent": "bob-0760e04b"}))
+    g.call("run_command", raw({"command": "echo c"}))                                  # no hook: the instance
+    g.call("run_command", raw({"command": "echo d", "_kosha_agent": "root; drop table"}))  # malformed: ignored
+    assert [r["agent_id"] for r in rows(live_koshad, "SELECT agent_id FROM actions ORDER BY created_at")] == \
+        ["bob-f9d25337", "bob-0760e04b", "kosha", "kosha"]
+    assert all("_kosha_agent" not in r["raw"] for r in rows(live_koshad, "SELECT raw FROM actions"))
+
+
+def test_two_stamped_tabs_on_one_server_converge(live_koshad, ws):
+    # a failed action is refunded and doesn't count as a touch, so collide on one that succeeds
+    g = Gateway("kosha", "fleet1", str(ws), approval_wait=0)
+    write = {"command": "echo hi > shared.txt"}
+    assert g.call("run_command", raw({**write, "_kosha_agent": "bob-aaaaaaaa"}))[0] is False
+    is_error, text = g.call("run_command", raw({**write, "_kosha_agent": "bob-bbbbbbbb"}))
+    assert is_error and "target convergence" in text and "bob-aaaaaaaa already acted" in text
+
+
+def test_approved_retry_from_the_same_tab_matches(live_koshad, ws):
+    (ws / "run.sh").write_text("x")
+    g = Gateway("kosha", "fleet1", str(ws), approval_wait=10, poll=0.05)
+    t, box = call_in_background(g, "run_command", {"command": "chmod 777 run.sh", "_kosha_agent": "bob-aaaaaaaa"})
+    [ap] = wait_pending(live_koshad)
+    assert ap["agent_id"] == "bob-aaaaaaaa"
+    live_koshad.db.resolve_approval(ap["id"], "approve_once")
+    t.join(10)
+    assert box["r"][0] is False

@@ -46,10 +46,22 @@ def test_execute_command_cwd_is_workspace_relative(live_koshad):
     assert rows(live_koshad, "SELECT cwd FROM actions") == [{"cwd": "/tmp/ws/sub/dir"}]
 
 
-def test_kosha_mcp_and_read_only_tools_pass_without_koshad(dead_koshad):
-    for tool in ("mcp__kosha-sub1__run_command", "read_file", "list_files", "grep"):
+def test_read_only_tools_pass_without_koshad(dead_koshad):
+    for tool in ("read_file", "list_files", "grep"):
         code, out, err, _ = run_hook(bob_payload(tool, {"path": "x"}))
         assert (code, out, err) == (0, "", ""), tool
+
+
+# --- Kosha's own MCP tools: the hook stamps the tab's identity, decides nothing ---
+
+def test_kosha_tool_call_is_stamped_with_the_tabs_identity(dead_koshad):
+    # needs no koshad: it only adds identity; kosha-mcp gates the call
+    code, out, err, _ = run_hook({**bob_payload("mcp__kosha__run_command", {"command": "ls", "_kosha_agent": "bob-forged"}),
+                                  "session_id": "f9d253378753d40b044f825aa5aa1ccf"})
+    assert (code, err) == (0, "")
+    hso = json.loads(out)["hookSpecificOutput"]
+    assert hso["permissionDecision"] == "allow" and hso["hookEventName"] == "PreToolUse"
+    assert hso["updatedInput"] == {"command": "ls", "_kosha_agent": "bob-f9d25337"}   # forged value overwritten
 
 
 def test_other_mcp_tools_are_priced(dead_koshad):
@@ -298,3 +310,15 @@ def test_waiting_hook_through_bobs_own_runner(bob, live_koshad, tmp_path):
     start = time.monotonic()
     r = bob.run_hooks(hooks_cfg, tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}, cwd=str(tmp_path)))
     assert r["blocked"] is False and r["warns"] == [] and time.monotonic() - start > 1.0
+
+
+
+@needs_bob
+def test_bobs_runner_applies_the_identity_stamp(bob, dead_koshad, tmp_path):
+    from kosha.adapters.bob_install import MATCHER
+    cfg = {"PreToolUse": [{"matcher": MATCHER, "hooks": [{"type": "command", "command": HOOK_BIN, "timeout": 10}]}]}
+    r = bob.run_hooks(cfg, tab(TAB_A, "mcp__kosha__git", {"args": "push origin main"}, cwd=str(tmp_path)))
+    assert r["blocked"] is False and r["warns"] == []
+    assert r["updatedInput"] == {"args": "push origin main", "_kosha_agent": "bob-f9d25337"}
+    other = bob.run_hooks(cfg, tab(TAB_A, "execute_command", {"command": "ls"}, cwd=str(tmp_path)))
+    assert "updatedInput" not in other                        # the matcher only touches Kosha's tools

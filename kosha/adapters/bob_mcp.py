@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -40,7 +41,15 @@ MAX_OUTPUT = 20_000            # characters returned to the agent per stream
 MAX_ROWS = 200
 
 
+STAMPED_AGENT = re.compile(r"^bob-[0-9a-zA-Z_-]{1,40}$")
+
+
 def resolve_agent_id(raw_request: dict, server_instance_name: str) -> str:
+    # a Bob tab's identity, stamped onto the call by kosha-hook (it overwrites whatever the
+    # agent wrote there); without the hook, every call is the instance's own agent
+    stamped = (raw_request.get("arguments") or {}).get("_kosha_agent")
+    if isinstance(stamped, str) and STAMPED_AGENT.match(stamped):
+        return stamped
     if IDENTITY_MODE == "inline":
         return ((raw_request.get("_meta") or {}).get("agent_id")
                 or (raw_request.get("arguments") or {}).get("agent")
