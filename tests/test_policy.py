@@ -51,6 +51,44 @@ def test_hard_deny_rm_rf_root(argv):
     assert d.reason and d.suggestion
 
 @pytest.mark.parametrize("argv", [
+    ["/bin/rm", "-rf", "/"],                    # rm by absolute path
+    ["/usr/bin/rm", "-rf", "/*"],
+    ["sudo", "/bin/rm", "-fr", "/"],
+    ["rm", "-rf", "//"],                        # repeated slashes
+    ["rm", "-rf", "///"],
+    ["rm", "-rf", "/."],                        # trailing /.
+    ["rm", "-rf", "/tmp/.."],
+    ["cd", "/", "&&", "rm", "-rf", "*"],        # relative operand after cd /
+    ["cd", "/", ";", "rm", "-rf", "./*"],
+    ["cd", "/tmp", "&&", "cd", "..", "&&", "rm", "-rf", "*"],
+])
+def test_hard_deny_rm_variants(argv):
+    d = decide(act(argv), 3, "irrev|local|nopriv", state())
+    assert (d.decision, d.rule) == ("deny", "hard_deny")
+
+
+@pytest.mark.parametrize("command", [
+    "cd /&&rm -rf *",                           # no spaces: argv can't show the split
+    "bash -c 'rm -rf //'",
+])
+def test_hard_deny_rm_variants_in_raw_command(command):
+    d = decide(act(["bash", "-c", command], raw={"command": command}), 3, "irrev|local|nopriv", state())
+    assert (d.decision, d.rule) == ("deny", "hard_deny")
+
+
+def test_hard_deny_relative_rm_when_action_cwd_is_root():
+    a = act(["rm", "-rf", "*"])
+    a.cwd = "/"
+    assert decide(a, 3, "irrev|local|nopriv", state()).rule == "hard_deny"
+
+
+@pytest.mark.parametrize("argv", [
+    ["rm", "-rf", "*"],                          # cwd /repo, not root
+    ["cd", "/tmp", "&&", "rm", "-rf", "*"],
+    ["cd", "&&", "rm", "-rf", "*"],               # bare cd goes home
+    ["rm", "-rf", "//tmp"],
+    ["rm", "-rf", "/tmp/."],
+    ["/bin/rm", "-r", "/"],                      # no force
     ["rm", "-rf", "build/"],
     ["rm", "-rf", "/tmp/x"],
     ["rm", "/"],                      # not recursive+force

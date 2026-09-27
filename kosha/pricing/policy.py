@@ -9,15 +9,17 @@ suggestion of what would be allowed, so the agent can re-plan.
 """
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Optional
 
 from kosha.pricing.convergence import MIN_LEVEL as TOUCH_LEVEL
-from kosha.pricing.convergence import Touch, converges, targets_of
+from kosha.pricing.convergence import Touch, converges, norm_path, targets_of
 from kosha.pricing.match import PROD_NAME
 from kosha.pricing.pricing import price as cell_price
 from kosha.pricing.rubric import LEVEL_NAMES
+from kosha.system.parser import split_command
 
 if TYPE_CHECKING:
     from kosha.system.action import Action
@@ -78,21 +80,62 @@ class LedgerState:
 
 # --- hard-deny patterns ---
 
-def _rm_rf_root(argv: list[str]) -> bool:
-    """rm with recursive + force aimed at / (or /*), including sudo and split flags."""
-    for i, tok in enumerate(argv):
-        if tok != "rm":
+def _segments(argv: list[str]) -> list[list[str]]:
+    out, cur = [], []
+    for tok in argv:
+        if tok in SHELL_OPERATORS:
+            out.append(cur)
+            cur = []
+        else:
+            cur.append(tok)
+    return [*out, cur]
+
+
+def _resolves_to_root(arg: str, cwd: str) -> bool:
+    """Whether an rm operand names / or everything directly under it, once repeated
+    slashes are collapsed, `.`/`..` resolved and a relative operand joined to cwd
+    (norm_path, as convergence resolves targets). `*` and `DIR/*` count as DIR."""
+    if arg.endswith("*") and (arg == "*" or arg[:-1].endswith("/")):
+        arg = arg[:-1] or "."
+    arg = re.sub(r"/{2,}", "/", arg.strip())
+    if not arg.startswith("/") and not cwd.startswith("/"):
+        return False
+    return norm_path(arg, cwd) == "/"
+
+
+def _raw_command_argv(action: Action) -> list[str]:
+    """raw["command"] split by the runtime parser (which also splits `a&&b` with no
+    spaces and unwraps `bash -c`), segments joined with `;`, for the cases argv
+    alone doesn't show."""
+    command = (action.raw or {}).get("command")
+    if not isinstance(command, str):
+        return []
+    out: list[str] = []
+    for seg in split_command(command):
+        out += [*seg, ";"]
+    return out
+
+
+def _rm_rf_root(argv: list[str], cwd: str = "") -> bool:
+    """rm with recursive + force whose operand resolves to / or /*, including sudo,
+    split flags, rm called by path (/bin/rm), `rm -rf //`, `rm -rf /.`, and a relative
+    operand after `cd /` in the same command line (`cd / && rm -rf *`). cwd is the
+    action's working directory; `cd DIR` segments move it, as in
+    convergence.command_targets."""
+    for seg in _segments(argv):
+        if seg[:1] == ["cd"]:
+            cwd = norm_path(seg[1], cwd) if len(seg) > 1 else "~"
             continue
-        args = []
-        for a in argv[i + 1:]:
-            if a in SHELL_OPERATORS:
-                break
-            args.append(a)
-        flags = "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
-        recursive = "r" in flags.lower() or "--recursive" in args
-        force = "f" in flags or "--force" in args
-        if recursive and force and any(a in ("/", "/*") for a in args):
-            return True
+        for i, tok in enumerate(seg):
+            if posixpath.basename(tok).strip().rstrip("\x00") != "rm":
+                continue
+            args = seg[i + 1:]
+            flags = "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
+            recursive = "r" in flags.lower() or "--recursive" in args
+            force = "f" in flags or "--force" in args
+            operands = [a for a in args if not a.startswith("-")]
+            if recursive and force and any(_resolves_to_root(a, cwd) for a in operands):
+                return True
     return False
 
 
@@ -156,7 +199,8 @@ def _hard_deny_reason(action: Action) -> Optional[str]:
     issues or verifies approval tokens yet, so an override would accept any string
     the caller sets. An override comes back only with real issuance, tied to a human
     approval in the queue."""
-    if _rm_rf_root(action.argv):
+    cwd = getattr(action, "cwd", "") or ""
+    if _rm_rf_root(action.argv, cwd) or _rm_rf_root(_raw_command_argv(action), cwd):
         return "rm -rf on the filesystem root"
     if _drops_prod_db(action):
         return "dropping a prod database"
