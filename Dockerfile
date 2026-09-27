@@ -4,7 +4,7 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY pyproject.toml ./
 COPY kosha ./kosha
-COPY config/price_table.m1.json ./config/price_table.m1.json
+COPY config/effects.yaml config/price_table.m1.json ./config/
 RUN pip install --no-cache-dir .
 ENV KOSHAD_HOST=0.0.0.0 \
     KOSHAD_PORT=8765 \
