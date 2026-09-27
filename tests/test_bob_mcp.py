@@ -247,7 +247,7 @@ def test_mcp_protocol_meta_reaches_identity_in_inline_mode(live_koshad, ws, monk
 
 def test_every_tool_description_carries_the_gating_rules():
     # Bob ignores MCP server `instructions`; tool descriptions are what the model sees
-    for t in bob_mcp.TOOLS:
+    for t in (t for t in bob_mcp.TOOLS if t.name in bob_mcp.ACTION_TOOLS):
         assert "KOSHA HELD FOR HUMAN APPROVAL" in t.description and "retry this exact call" in t.description
         assert "KOSHA DENIED" in t.description, t.name
 
@@ -264,3 +264,43 @@ def test_self_issued_token_does_not_lift_hard_deny_end_to_end(live_koshad, ws):
                                                  "approval_token": "i-made-this-up"}))
     assert is_error and text.startswith("KOSHA DENIED")
     assert last_action(live_koshad)["rule"] == "hard_deny"
+
+
+def test_tool_descriptions_say_reads_are_free():
+    # live finding: agents refused cheap reads "to save budget"
+    for t in (t for t in bob_mcp.TOOLS if t.name in bob_mcp.ACTION_TOOLS):
+        assert "read-only calls are free" in t.description and "don't ration normal work" in t.description
+
+
+# --- kosha_review: the approval queue, read-only, from inside Bob ---
+
+def test_review_shows_held_actions_with_their_bundle(live_koshad, ws):
+    g = gw(ws)
+    g.call("run_command", raw({"command": "echo warmup"}))
+    g.call("run_command", raw({"command": "chmod 777 run.sh"}))                    # held (L5)
+    is_error, text = g.call("kosha_review", raw({}))
+    assert not is_error
+    assert "HELD: sub1 run_command chmod 777 run.sh (L5)" in text and "<- held" in text
+    assert "echo warmup" in text                                                     # the bundle
+    assert gw(ws).call("kosha_review", raw({}))[1].count("#") == 1
+
+
+def test_review_with_nothing_held(live_koshad, ws):
+    assert gw(ws).call("kosha_review", raw({})) == (False, "Nothing is held for approval.")
+
+
+def test_review_is_not_priced_or_recorded_as_an_action(live_koshad, ws):
+    g = gw(ws)
+    g.call("run_command", raw({"command": "chmod 777 run.sh"}))
+    g.call("kosha_review", raw({}))
+    assert [r["tool"] for r in rows(live_koshad, "SELECT tool FROM actions")] == ["run_command"]
+
+
+def test_review_with_koshad_down(dead_koshad, ws):
+    is_error, text = gw(ws).call("kosha_review", raw({}))
+    assert is_error and "not responding" in text
+
+
+def test_there_is_no_approve_tool():
+    # approving needs the human's passphrase, which must never enter the agent's chat
+    assert not any("approve" in t.name for t in bob_mcp.TOOLS)

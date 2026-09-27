@@ -439,5 +439,80 @@ Full suite: 760 passed.
 - **`batch_id` is NOT implemented,** on hold until it's confirmed whether batch escalation is on task 11's demo path.
 - **Teammate gap found (`convergence.targets_of`, not touched):** path targets from command text aren't resolved against `action.cwd`, while file tools send absolute paths. So `edit_file VERSION` (`path:/…/work/VERSION`) and `sed -i … VERSION` (`path:VERSION`) **don't converge on the same file.** Suggested one-line fix: `command_targets(str(command), action.cwd)`. **Task 11 must make the two colliding agents use the same form** (e.g. both `git push` the same branch, or both use file tools on the same file).
 
+## 2026-09-27: Bob prompted on every kosha call. Fixed with a global approval setting
+
+- **Symptom:** in the first live tab, Bob asked for approval on each of the three `mcp__kosha-release-bump__run_command` calls, despite `alwaysAllow` in `.bob/mcp.json`.
+- **Cause, from Bob's source:** `alwaysAllow` *is* read (`seedTaskAllowedMcpTools` copies it into the task's `taskAllowedMcpTools`). But `shouldAutoApprove` for an MCP tool also requires the `mcp` permission in `approval.allowed_permissions`, whose default is `["read"]`. Settings are deep-merged over the defaults (`Soe`/`NPe`), and `allowed_permissions` is unioned with the default, not replaced. Auto-approve is also forced off in an untrusted workspace.
+- **Fix (user-approved, global):** `~/.bob/settings/settings.json` now has `approval.allowed_permissions: ["mcp"]` (effective `["read","mcp"]`). Backup: `settings.json.bak.kosha-20260927-012622`; the pre-existing `settings.json.bak` is untouched. Only MCP tools listed in a server's `alwaysAllow` are auto-approved, i.e. only kosha's tools; other MCP servers still prompt. **Open new task tabs after changing it:** `allowed_permissions` is also a per-task key, and a task-level value overrides the global one. `setup_demo.py` now prints this as a prerequisite.
+- **First live Bob run through kosha-mcp:** one tab (`release-bump`) ran `git status --short`, `git log --oneline -1` and `cat VERSION` via `mcp__kosha-release-bump__run_command`. koshad recorded all three as `release-bump`, harness `bob`, allow, confirmed. Bob's own task record shows the same three tool calls. **The concurrency check still needs the other two tabs.**
+
+## 2026-09-27: Live Bob concurrency result, and agents rationing budget
+
+- **All three modes work live through kosha-mcp, each under its own identity:** `release-bump`, `test-fix` and `migrate-deploy` each ran `git status`/`git log`/`cat VERSION` from their own tab, and koshad recorded each under its own `agent_id`, allowed and confirmed.
+- **Concurrency: confirmed for three tasks (re-run after the role fix, 20:18 UTC).** 9 actions from `release-bump`, `test-fix` and `migrate-deploy` within 20:18:13–20:18:21, interleaved: 6 agent switches in order. `migrate-deploy` at 20:18:16.336 fell between the other two agents' running sequences. Each was recorded under its own identity, price 0. After the role fix, no agent cited budget cost; one declined ten identical calls as busy-work (it acknowledged reads are free) and ran one. Two stopped early because of **Bob's own repeated-call guard**, not Kosha. Earlier run: **confirmed for two tasks.** koshad recorded `test-fix` at 20:08:19.544, **`release-bump` at 20:08:19.856**, then `test-fix` again at 20:08:21.160. release-bump's call landed inside test-fix's running sequence, so two Bob tasks executed at the same time. The third tab made no calls (see below), so three-way concurrency wasn't exercised; two is enough for the claim. An earlier run with prompts sent minutes apart (each task ~3s) was inconclusive, not negative.
+- **Finding: agents rationed "budget" on free work.** Asked to run `git status --short` ten times, two of three agents **refused**, saying it would "burn the shared fleet budget", although koshad prices it at 0 (L0). The cause was my wording: the role text and tool descriptions said "every ... step/call is priced against a budget shared by the whole fleet", and nothing said reads are free or that deciding risk is Kosha's job. That makes agents self-censor, the opposite of Kosha's pitch (auto-approve on, the gate decides), and in the demo it could look like an agent refusing a legitimate release step.
+  - **Fixed** in the `setup_demo.py` role text (applied to the live `.demo` modes too) and in kosha-mcp's `GATING` tool-description text: steps are priced *by risk*, **read-only steps are free**, and **"Do not ration, skip or refuse normal work to save budget: deciding what is too risky is Kosha's job, not yours."** Tests pin both. Suite: 853 passed.
+  - **Needs a reload in Bob to take effect:** restart the kosha MCP servers (for tool descriptions) and reload modes (for role text), then use new tabs.
+- Also seen: one agent mentioned "the tool is warning me that repeated identical calls won't produce different results". That's Bob's own repeated-call warning, not Kosha.
+
+## 2026-09-27: task 11 done (scripted demo)
+
+- **`demo_repo/rehearse.py`:** plays the demo storyline deterministically in a throwaway world (never touches `.demo/`), through the real kosha-mcp `Gateway` code into a real koshad on a free port with fs_guard on. It prints each beat and **exits 1 if any beat differs from the script**. Run it before every recording.
+- **The story** (every step reasonable alone):
+  - allowed: version bump, changelog, flaky-test fix, tests, a prod read
+  - `test-fix` removes CI's "slow integration check" (L4, allowed alone)
+  - `release-bump` commits and pushes `main` (L4, allowed alone)
+  - **`test-fix` pushes `main` → held, `convergence`**
+  - **`migrate-deploy` migrates prod → held, `escalation`**, with a bundle showing the CI removal, the commit and the push
+  - the human, via curl: **deny** the duplicate push, **approve_reset** the migration
+  - the migration retry runs, then **deploy to prod is allowed** in the fresh window
+
+  Rehearsal result: all 12 beats as scripted, **0 fs_guard bypass events** across the fully gated run (no false positives).
+- **`demo_repo/DEMO.md`:** the recording run sheet. It covers pre-flight (rehearse, reset, start koshad, Bob trust/reload/new tabs), **the exact prompt per tab in send order** (tabs 1 and 2 together, tab 3 after they finish), the Kosha response to expect at each beat, the curl approvals, narration lines, and what to do if an agent goes off-script (fallback: run the rehearsal on camera).
+- **`demo_repo/show_bundle.py`:** read-only pretty-printer for `curl -s localhost:8765/approvals`, so the bundle is legible on camera. Approving stays plain curl.
+- **Fix needed for the real Bob run:** the generated `mcp.json` now puts the venv first on kosha-mcp's `PATH`. Otherwise an agent's `python -m pytest` runs a Python without the demo app's dependencies.
+- **Rehearsal bug found and fixed:** it stopped koshad without waiting, so the temp-dir cleanup ran while fs_guard was still live (the same race class as the earlier reset bug). It now joins the server thread first.
+- **Constraints honoured:**
+  - no secrets anywhere
+  - fresh ledger before recording (DEMO.md step 0)
+  - no fs_guard beat staged, and nothing runs over ~1s
+  - the collision uses the same form for both agents (`git push main`), sidestepping the pending `targets_of` cwd gap
+  - never "subagents"
+  - `batch_id` is **not needed**: no beat chains destructive commands
+- **Tests:** `tests/test_demo_scenario.py` runs the full rehearsal and asserts the key beats (convergence hold, escalation hold, deploy allowed), and checks `show_bundle.py` on real approval output. **If a pricing change breaks a demo beat, the suite fails.** Full suite: 855 passed.
+- **Not verified:** the Bob-driven run of this exact script. Agents may take the steps in a different order or add steps. DEMO.md orders the sends to keep the shape, and the held beats don't depend on which of the two pushers goes second.
+
+## TRACKING: agent self-approval, and how humans approve (opened 2026-09-27)
+
+**The hole (found while designing human approval; applies to every harness):** agents' commands run as the same OS user as koshad, and koshad has no guard on its own control plane. So an agent can approve its own held action:
+- `curl -X POST localhost:8765/approvals/<id> -d '{"decision":"approve_once"}'` via `run_command` prices as a localhost POST (L3) and is **allowed**;
+- `sqlite3 <ledger>.db "update approvals set status='approve_once'"` prices as a local SQL write (L3) and is **allowed**;
+- editing `.bob/mcp.json`, the mode files, or hook settings rewires identity or removes the hook.
+
+A well-meaning agent told "this needs approval in Kosha" might try exactly this.
+
+| Tier | What | Status |
+|---|---|---|
+| **1. Detect** | Any command, file write or DB call touching Kosha's control plane (koshad address/port, the ledger DB file, `.bob/`, `.claude/settings*`, Kosha config) is priced as privilege, so **L5 and always held**. Pattern-based, so beatable by obfuscation (scripts, base64, env-var URLs). | **DONE.** `resolvers.is_control_plane_path/mentions_control_plane/names_koshad` plus `parser.segments_of`. **Any mention of the koshad address is held, reads included:** agents never need koshad, and a read/write label can be wrong (`wget --post-data` classifies as a GET, a matcher gap for the teammate). Control-plane *files* are held only on change: `cat .bob/mcp.json` and `select` on the ledger stay free. Tests: `tests/test_control_plane.py`, 13 self-approval routes held (curl/wget/python POST to koshad, `$KOSHAD_URL`, sqlite on the ledger by absolute and relative path, `rm` of the ledger, `.bob/` edits via echo/sed/rm, `~/.claude/settings.json`, file-tool writes, db_exec on a ledger alias); reads and ordinary work (the app's own localhost:8000, the demo steps) not flagged. Suite: 883 passed, demo rehearsal included. |
+| **2. Authenticate** | koshad asks the human for an approval passphrase at startup (on its own TTY), keeps only a digest in memory (never on disk, never returned by an endpoint), and requires it on `POST /approvals/{id}` (`X-Kosha-Approval`). `/decide` and `/settle` stay open for the adapters. | **DONE, then briefly removed, then restored by decision (2026-09-27):** built and live-verified (`add9a22`), reverted (`1d09e35`), restored (`0834019`) together with the approval page, where it's typed once per page load. Live check on the real binary: prompted on its TTY; 401 without or with a wrong header, 200 with the right one; absent from `/proc/<pid>/environ` and `cmdline`; `ptrace_scope` 1. Residual: a direct ledger DB write (Tier 1 catches the plain forms); a malicious agent replacing koshad (out of scope). |
+| **3. Separate privileges** | Agents' commands execute as a separate OS user or in a container; koshad, the ledger and the approval socket are owned by the human user (Unix-socket permissions). Self-approval becomes impossible by OS permissions, not pattern matching. This turns Kosha into a sandbox, which v1 deliberately isn't. | **roadmap: say it in the pitch** |
+
+**How humans approve, per harness:**
+- **Claude Code:** proposed. `kosha-hook` returns `permissionDecision: "ask"`, so Claude Code's native prompt asks the human, only in `default`/`acceptEdits`/`plan` modes (bypass and unknown modes keep block-and-retry). koshad marks a held action "approved in harness" when PostToolUse arrives, and closes it with no charge on PostToolUseFailure. Known gap: a human reject in the prompt fires no hook, so the entry stays pending. **Not started; after Tiers 1–2.**
+- **Bob: the approval page at `/ui`. DONE (headless-Chrome verified; not yet tried inside Bob).**
+  - Served by koshad, self-contained (no external resources), opened inside Bob with **Simple Browser: Show** → `http://localhost:8765/ui`.
+  - It shows each held action, **why** (rule plus Kosha's reason and suggestion: `/approvals` now carries them), the fleet's spend, and the **bundle**. It has **Approve once / Approve & reset window / Deny** (with a note). The passphrase is typed once, **kept in page memory only**, and sent as `X-Kosha-Approval`; a 401 re-locks the page. It updates live from `/stream`, with a 5s poll as fallback.
+  - All agent-written text goes in through `textContent`, never HTML, since commands, SQL and paths come from agents.
+  - Decisions are confirmed on a persistent line ("#2 approve_reset (migrate-deploy). Tell migrate-deploy to retry…"). The first version lost that message on the live refresh; the browser test caught it.
+  - **Verified in headless Chrome over DevTools**, against a live koshad holding a convergence and an escalation:
+    - both cards rendered with rule, reason, spend and bundle;
+    - an `<img onerror>` payload in a bundled command rendered as text, and 0 `<img>` elements were created;
+    - the buttons were disabled until unlock;
+    - a wrong passphrase gave "Wrong passphrase", with nothing changed;
+    - with the right one, Approve & reset plus Deny gave koshad exactly `#1 deny`, `#2 approve_reset`, and the page showed "Nothing is held".
+  - Tests: `tests/test_ui.py` (8): controls present, self-contained, no HTML sinks, no browser storage, the script parses (`node --check`), approvals carry the reason, the page's request flow gives 401 then 200.
+  - **In-chat approval was tried and removed:** a `kosha_approve` MCP tool (never auto-approved, so Bob asks) was built (`cc41ccb`). It was removed (`9de5214`) because it can't hold the passphrase without putting it where the agent can read it. Bob also can't hide its "always allow" button for a single MCP tool: `forbiddenApprovalGroups` works per permission group, and every MCP tool shares `mcp`. `kosha_review` (read-only) stays.
+- **OpenCode:** never built (the stretch goal, last in the cut order).
+
 ## Next (task 11 onward), not started
-demo scenario → web/.
+web/ (dashboard; approvals stay curl for the demo).

@@ -20,5 +20,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["kosha*"]
 
+[tool.setuptools.package-data]
+kosha = ["api/ui.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -23,9 +23,18 @@ BOB_HOOK_EVENTS = {"SessionStart", "UserPromptSubmit", "PreCompact", "PostCompac
                    "PreToolUse", "PostToolUse", "Stop"}
 
 
+@pytest.fixture(autouse=True)
+def no_live_koshad(monkeypatch):
+    # tests must not depend on whether a real koshad is running on this machine's 8765;
+    # the refuse-while-running guard has its own test that turns this back on
+    monkeypatch.setattr(setup_demo, "koshad_running", lambda port=8765: False)
+
+
 @pytest.fixture(scope="module")
 def demo(tmp_path_factory):
-    return setup_demo.build(tmp_path_factory.mktemp("d") / ".demo")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(setup_demo, "koshad_running", lambda port=8765: False)
+        return setup_demo.build(tmp_path_factory.mktemp("d") / ".demo")
 
 
 @pytest.fixture
@@ -113,6 +122,7 @@ def test_mcp_entries_are_pinned_one_per_mode(demo):
         assert args[args.index("--workspace") + 1] == str(demo["work"])
         assert os.access(e["command"], os.X_OK) and e["timeout"] >= 300000
         assert e["env"]["KOSHA_CONFIG"] == str(demo["config"])
+        assert "kosha_review" in e["alwaysAllow"]
         assert len(bob_tool_id(name, "run_command")) <= 64
 
 
@@ -122,6 +132,7 @@ def test_modes_are_valid_and_carry_the_gating_rules(demo):
     for m in modes:
         assert re.fullmatch(r"[a-zA-Z0-9-]+", m["slug"]) and m["name"]    # Bob's mode schema
         assert set(m["groups"]) == {"read", "mcp"}                         # no edit/execute/mode
+        assert "never try to approve one yourself" in m["roleDefinition"]
         role = m["roleDefinition"]
         assert f"mcp__kosha-{m['slug']}__run_command" in role
         for tag in ("KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED", "KOSHA UNAVAILABLE",
@@ -154,7 +165,8 @@ def test_every_mcp_entry_launches_as_configured(demo):
             return {t.name for t in (await c.list_tools()).tools}
 
     for e in servers.values():
-        assert asyncio.run(tools(e)) == {"run_command", "edit_file", "write_file", "git", "db_exec", "deploy"}
+        assert asyncio.run(tools(e)) == {"run_command", "edit_file", "write_file", "git", "db_exec", "deploy",
+                                         "kosha_review"}
 
 
 # --- the scenario's steps are priced as the story needs ---
@@ -181,3 +193,30 @@ def classify(demo, tool, raw=None, argv=(), targets=()):
 def test_scenario_step_levels(demo_config, step, tool, raw, targets, level):
     argv = ["git", *raw["args"].split()] if tool == "git" else []
     assert classify(demo_config, tool, raw, argv, targets).level == level, step
+
+
+def test_reset_refuses_while_koshad_is_running(tmp_path, monkeypatch):
+    # a dying koshad re-creates kosha.db mid-delete, so never wipe under a live one
+    first = setup_demo.build(tmp_path / ".demo")
+    monkeypatch.setattr(setup_demo, "koshad_running", lambda port=8765: True)
+    with pytest.raises(SystemExit, match="koshad is still running"):
+        setup_demo.build(tmp_path / ".demo")
+    assert (first["root"] / setup_demo.MARKER).exists() and first["work"].exists()   # untouched
+
+
+def test_roles_tell_agents_reads_are_free_and_not_to_ration(demo):
+    # live finding: agents refused 10x `git status` "to save budget" though Kosha priced it 0
+    modes = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
+    for m in modes:
+        role = m["roleDefinition"]
+        assert "Read-only steps" in role and "are free" in role
+        assert "Do not ration, skip or refuse normal work" in role
+
+
+def test_agents_workspace_has_no_demo_tooling(demo):
+    # the run sheet (with expected Kosha outcomes) must never be readable by the agents
+    work_files = {p.name for p in demo["work"].rglob("*") if ".git" not in p.parts}
+    for leaked in ("DEMO.md", "rehearse.py", "show_bundle.py", "setup_demo.py"):
+        assert leaked not in work_files
+    tracked = subprocess.run(["git", "ls-files"], cwd=demo["work"], capture_output=True, text=True).stdout
+    assert "DEMO.md" not in tracked and "rehearse.py" not in tracked

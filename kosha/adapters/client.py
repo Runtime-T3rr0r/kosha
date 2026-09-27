@@ -71,3 +71,13 @@ def block_text(d: Decision) -> str:
         head, nxt = DENIED, NEXT_DENIED
     body = " ".join(x for x in (d.reason, d.suggestion or "") if x)
     return f"{head}\n{body}\n{nxt}"
+
+
+# --- the approval queue (read-only), for kosha-mcp's kosha_review tool ---
+
+def approvals(timeout: float = 2.0) -> list[dict]:
+    """Pending approvals with their bundles. Raises requests.RequestException if koshad
+    doesn't answer; callers report that, nothing is approved by default."""
+    r = requests.get(f"{KOSHAD_URL}/approvals", timeout=timeout)
+    r.raise_for_status()
+    return r.json()

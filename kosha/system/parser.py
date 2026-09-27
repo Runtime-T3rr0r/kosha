@@ -185,7 +185,36 @@ def _write_paths(action: Action) -> list[str]:
     return paths
 
 
+def _control_plane_segment(action: Action, what: str) -> Segment:
+    """Changing Kosha's own control plane: priced as privilege, so always held (L5)."""
+    e = {**_entry("unknown"), "id": "kosha_control_plane", "privilege": True}
+    return _segment(["__kosha_control_plane__", what], e, action)
+
+
 def segments_of(action: Action) -> list[Segment]:
+    segs = _segments_of(action)
+    # Agents never need to talk to koshad, so any mention of its address is held, reads
+    # included: a read/write label can be wrong (e.g. `wget --post-data` classifies as GET).
+    if action.tool not in ("edit_file", "write_file", "db_exec"):
+        addressed = next((t for t in _command_texts(action) if resolvers.names_koshad(t)), None)
+        if addressed:
+            return segs + [_control_plane_segment(action, addressed)]
+    if all(s.level == 0 for s in segs):
+        return segs                        # reading control-plane files changes nothing
+    raw = action.raw or {}
+    if action.tool in ("edit_file", "write_file"):
+        hit = next((p for p in _write_paths(action) if resolvers.is_control_plane_path(p, action.cwd)), None)
+    elif action.tool == "db_exec":
+        url = str(((resolvers.load_config().get("databases") or {}).get(str(raw.get("db") or "")) or {}).get("url") or "")
+        path = url.removeprefix("sqlite:///") if url.startswith("sqlite:///") else ""
+        hit = path if path and resolvers.is_control_plane_path(path, str(resolvers.KOSHA_ROOT)) else None
+    else:
+        texts = _command_texts(action)
+        hit = next((t for t in texts if resolvers.mentions_control_plane(t, action.cwd)), None)
+    return segs + [_control_plane_segment(action, hit)] if hit else segs
+
+
+def _segments_of(action: Action) -> list[Segment]:
     workspace = resolvers.workspace_of(action.cwd)
     cwd = action.cwd
 

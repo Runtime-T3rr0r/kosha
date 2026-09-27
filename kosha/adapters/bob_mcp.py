@@ -47,8 +47,9 @@ def resolve_agent_id(raw_request: dict, server_instance_name: str) -> str:
 # Bob never forwards an MCP server's `instructions` to the model (its MCP client stores
 # them, nothing reads them), so the gating rules ride on every tool description, the
 # one channel Bob always shows. The mode's roleDefinition repeats them in full.
-GATING = (" Gated by Kosha: every call is priced against a budget shared by the whole agent "
-          "fleet. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
+GATING = (" Gated by Kosha: each call is priced by its risk against a budget shared by the whole "
+          "agent fleet; read-only calls are free, and Kosha, not you, decides what is too risky, so "
+          "don't ration normal work. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
           "the user and, once they say it is approved, retry this exact call. KOSHA DENIED means "
           "retrying will not help: re-plan. Never work around a block with other tools.")
 
@@ -80,6 +81,20 @@ TOOLS = [
     types.Tool(name="deploy", description="Deploy the workspace to a target environment." + GATING,
                input_schema=_schema({"target": "Environment name, e.g. staging or prod"}, ["target"])),
 ]
+ACTION_TOOLS = {t.name for t in TOOLS}
+
+# The approval queue, read-only, from inside Bob: an agent (or the human, via the agent)
+# can see what is held and why. Approving is not a tool: it needs the human's approval
+# passphrase, which must never enter the agent's chat, so humans approve on the /ui page.
+# Not priced: reading the queue isn't an action on the workspace.
+CONTROL_TOOLS = [
+    types.Tool(name="kosha_review",
+               description="Show what Kosha is holding for human approval: each held action and its "
+                           "bundle (everything the fleet did this window, in order). Read-only. Only "
+                           "the human can approve, on the Kosha approval page.",
+               input_schema={"type": "object", "properties": {}}),
+]
+TOOLS = TOOLS + CONTROL_TOOLS
 TOOL_NAMES = {t.name for t in TOOLS}
 DECLARED = {t.name: set(t.input_schema["properties"]) for t in TOOLS}
 
@@ -147,6 +162,8 @@ class Gateway:
         if name not in TOOL_NAMES:
             return True, f"kosha-mcp: unknown tool {name}"
         args = raw_request.get("arguments") or {}
+        if name == "kosha_review":
+            return _review()
         action = self.build_action(name, args, resolve_agent_id(raw_request, self.agent))
         d = client.decide(action)
         if d.decision != "allow":
@@ -157,6 +174,30 @@ class Gateway:
             ok, out = False, f"{name} failed: {type(e).__name__}: {e}"
         client.settle(action.action_id, "success" if ok else "failure")
         return not ok, out
+
+
+def _what(entry: dict) -> str:
+    raw = entry.get("raw") or {}
+    return " ".join(map(str, entry.get("argv") or [raw.get("sql") or raw.get("path")
+                                                   or raw.get("command") or raw.get("args") or ""]))
+
+
+def _review() -> tuple[bool, str]:
+    try:
+        pending = client.approvals()
+    except Exception as e:
+        return True, f"Kosha is not responding ({type(e).__name__}); nothing to show."
+    if not pending:
+        return False, "Nothing is held for approval."
+    lines = []
+    for ap in pending:
+        held = ap["bundle"][-1]
+        lines.append(f"#{ap['id']}  HELD: {ap['agent_id']} {held['tool']} {_what(held)} (L{held['level']})")
+        lines.append("   this window, in order:")
+        for e in ap["bundle"]:
+            flag = "   <- held" if e["status"] == "pending" else ""
+            lines.append(f"     {e['agent_id']:15} L{e['level']}  {e['tool']:11} {_what(e)}{flag}")
+    return False, "\n".join(lines)
 
 
 def _split(s: str) -> list[str]:
