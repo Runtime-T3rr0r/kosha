@@ -137,6 +137,15 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None,
     def approvals() -> list[dict]:
         return db.pending_approvals()
 
+    @app.get("/approvals/{approval_id}")
+    def approval(approval_id: int) -> dict:
+        """Read-only status of one approval, so a waiting adapter can tell when the human
+        decided: pending | approve_once | approve_reset | deny | consumed."""
+        out = db.approval(approval_id)
+        if out is None:
+            raise HTTPException(404, "unknown approval")
+        return out
+
     @app.post("/approvals/{approval_id}")
     def resolve(approval_id: int, r: Resolve,
                 x_kosha_approval: Optional[str] = Header(default=None)) -> dict:

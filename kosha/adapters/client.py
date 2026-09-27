@@ -57,6 +57,9 @@ NEXT_HELD = ("Next step: stop, tell the user which call is waiting and why, and 
              "same arguments. Do not work around it with other tools, scripts or commands.")
 NEXT_DENIED = ("Next step: re-plan using the suggestion above, or ask the user. Do not work "
                "around it with other tools, scripts or commands.")
+DENIED_BY_HUMAN = "KOSHA DENIED BY A HUMAN: nothing was run."
+NEXT_DENIED_BY_HUMAN = ("Next step: don't retry this call. Tell the user, and re-plan around it "
+                        "using the human's note if there is one.")
 NEXT_UNAVAILABLE = ("Next step: tell the user Kosha is not responding, and retry this exact call "
                     "once they say it is back. Do not work around it.")
 
@@ -77,9 +80,22 @@ def block_text(d: Decision) -> str:
 
 # --- the approval queue (read-only), for kosha-mcp's kosha_review tool ---
 
+def approval_status(approval_id: int, timeout: float = 2.0) -> dict:
+    """{id, action_id, status, note} of one approval. Raises if koshad doesn't answer."""
+    r = requests.get(f"{KOSHAD_URL}/approvals/{approval_id}", timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
 def approvals(timeout: float = 2.0) -> list[dict]:
     """Pending approvals with their bundles. Raises requests.RequestException if koshad
     doesn't answer; callers report that, nothing is approved by default."""
     r = requests.get(f"{KOSHAD_URL}/approvals", timeout=timeout)
     r.raise_for_status()
     return r.json()
+
+
+def denied_by_human_text(note: str | None) -> str:
+    """Agent-facing text when a human denied a held call the agent was waiting on."""
+    body = f"Note from the human: {note}" if note else "The human left no note."
+    return f"{DENIED_BY_HUMAN}\n{body}\n{NEXT_DENIED_BY_HUMAN}"

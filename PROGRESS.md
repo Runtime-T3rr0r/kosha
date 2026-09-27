@@ -526,6 +526,25 @@ A well-meaning agent told "this needs approval in Kosha" might try exactly this.
     - Node, `test/*.test.js` (10): the parser (character-split chunks, CRLF, comments, multi-line data); history never pops up; duplicate ids ignored; koshad down at start-up means no live stream until the baseline succeeds; reconnect from the last id; and, with a fake `vscode` module, activation, the panel HTML/CSP/options and panel reuse. **Mutation-checked:** breaking the history skip fails 3 tests.
     - pytest, `tests/test_bob_extension.py` (4): runs the Node tests, checks the vsix structure and manifest, and **runs `core.js` against a real koshad**. A hold made before the watcher started did not pop up; a convergence hold made while it was watching popped up as "Kosha held test-fix: git push origin main (convergence)"; the status reached 2 held.
   - **Not verified (needs the Bob GUI):** that the panel actually opens by itself inside Bob, and that Bob lets a webview frame `http://127.0.0.1:8765`. If framing is blocked, the fallback is rendering the approval UI directly in the webview (~45 min).
+- **Wait-vs-bounce: DECIDED "wait" (2026-09-27, after a live Bob run showed held chats just ending).** A held kosha-mcp call now **stays open**: Bob shows the tool running and the agent's chat waits.
+  - kosha-mcp polls the new read-only `GET /approvals/{id}` every second.
+  - **On approve** it re-submits the exact same call, which matches the approval and is allowed once. It executes, and the agent gets the real result and **carries on by itself** (no "retry" message needed).
+  - **On deny** it returns `KOSHA DENIED BY A HUMAN` with the human's note.
+  - **If nobody decides** within `KOSHA_APPROVAL_WAIT` (demo 1500s), it falls back to the old `KOSHA HELD` text.
+  - Hard denies, fail-closed and koshad-down never wait. Bob's MCP `timeout` is now 1800000 ms in the demo config (wait plus a 270s command); a test enforces that ratio.
+  - Agent text (tool descriptions, role rule 2) now says a held call waits, possibly for minutes, and what each outcome means. The panel's confirmation says "Its waiting call runs now."
+  - **The hooks don't wait:** a 10s hook timeout makes it impossible. Claude Code gets its native ask prompt instead (not started).
+  - Tests: 9 new in `tests/test_bob_mcp.py`:
+    - approved runs in the same call, and the approval is consumed
+    - denied returns the note
+    - timeout falls back to held with the approval still pending
+    - hard deny and fail-closed return immediately; koshad down never waits
+    - two agents wait independently
+    - the status endpoint works
+    - the description text
+    - **end to end through the real `kosha-mcp` stdio server:** the call waited more than 1s, then ran on approval
+  - **The rehearsal now drives the waiting flow:** held calls stay open in background threads; after the human's decisions the push ends `denied_by_human` and the migration runs with no retry, then deploy. `test_demo_scenario` asserts both endings. Suite: 932 passed.
+  - **Known limit:** if the human cancels the tool call in Bob while it's waiting, kosha-mcp keeps polling until the timeout (cancellation isn't propagated). It's harmless: nothing runs without an approval, and an approval after cancelling would run the call with nobody reading the result.
 - **OpenCode:** never built (the stretch goal, last in the cut order).
 
 ## Next (task 11 onward), not started

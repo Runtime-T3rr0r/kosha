@@ -127,7 +127,7 @@ async function decide(ap, decision, note, msgEl, buttons) {
     // kept above the list: the card itself disappears on the next refresh
     const line = decision === "deny"
       ? `#${ap.id} denied (${ap.agent_id}). That call will not run.`
-      : `#${ap.id} ${out.status} (${ap.agent_id}). Tell ${ap.agent_id} to retry the exact same call.`;
+      : `#${ap.id} ${out.status} (${ap.agent_id}). Its waiting call runs now.`;
     $("done").textContent = [line, ...$("done").textContent.split("\n").filter(Boolean)].slice(0, 4).join("\n");
     setTimeout(refresh, 300);
   } catch (e) {

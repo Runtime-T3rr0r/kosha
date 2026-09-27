@@ -41,7 +41,10 @@ class Beat:
     args: dict
     expect: str                    # "allow" | "held:<rule>"
     say: str                       # narration for this beat
+    resolves: Optional[str] = None # held beats: how the still-open call ends after the human decides
+    after: str = ""                # narration for that ending
     result: Optional[str] = field(default=None, repr=False)
+    final: Optional[str] = field(default=None, repr=False)
 
 
 # One ordering of what three concurrent tasks do. DEMO.md sends the Bob prompts so the
@@ -69,15 +72,18 @@ STORY = [
     Beat("release-bump", "git", {"args": "push origin main"},
          "allow", "release-bump pushes main. Shared, L4, still fine on its own."),
     Beat("test-fix", "git", {"args": "push origin main"},
-         "held:convergence", "test-fix pushes main too. Two agents on the same branch: held."),
+         "held:convergence", "test-fix pushes main too. Two agents on the same branch: held. "
+                             "Its call stays open, waiting for a human.",
+         resolves="denied_by_human", after="The human denied it: test-fix's waiting call returns "
+                                           "the denial and the human's note."),
     Beat("migrate-deploy", "run_command", {"command": "python3 manage.py migrate --db prod"},
          "held:escalation", "migrate-deploy migrates prod. Alone it's a normal release step; after "
                             "an unreviewed CI change and a push to main, it's the third "
-                            "consequential step this window: held, with the whole bundle."),
+                            "consequential step this window: held, with the whole bundle.",
+         resolves="allow", after="The human approved it: migrate-deploy's waiting call runs, "
+                                 "with no retry needed."),
 ]
 AFTER_APPROVAL = [
-    Beat("migrate-deploy", "run_command", {"command": "python3 manage.py migrate --db prod"},
-         "allow", "The same call, retried after the human's approval: runs."),
     Beat("migrate-deploy", "deploy", {"target": "prod"},
          "allow", "Deploy to prod, in the fresh window: allowed. Release 1.3 is out."),
 ]
@@ -131,34 +137,52 @@ def run(root: Path, out=print) -> list[str]:
         time.sleep(0.02)
 
     problems: list[str] = []
-    gateways = {a: bob_mcp.Gateway(a, SESSION, str(work)) for a in setup_demo.FLEET}
+    # held calls wait for the human, exactly as in Bob (up to a minute here)
+    gateways = {a: bob_mcp.Gateway(a, SESSION, str(work), approval_wait=60, poll=0.05)
+                for a in setup_demo.FLEET}
+    waiting: list[tuple[Beat, threading.Thread, dict]] = []
+
+    def classify(is_error: bool, text: str) -> str:
+        first = text.splitlines()[0] if text else ""
+        if first.startswith("KOSHA DENIED BY A HUMAN"):
+            return "denied_by_human"
+        if first.startswith(("KOSHA", )):
+            return first
+        return "allow" if not is_error else f"error: {first}"
 
     def play(beats):
         for b in beats:
-            is_error, text = gateways[b.agent].call(b.tool, {"arguments": b.args, "_meta": {}})
-            first = text.splitlines()[0] if text else ""
-            if first.startswith("KOSHA HELD"):
-                rule = db._conn().execute(
-                    "SELECT rule FROM actions WHERE agent_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                    (b.agent,)).fetchone()[0]
-                got = f"held:{rule}"
-            elif first.startswith(("KOSHA DENIED", "KOSHA UNAVAILABLE")):
-                got = first
+            before = {a["id"] for a in db.pending_approvals()}
+            box: dict = {}
+            t = threading.Thread(target=lambda b=b, box=box: box.setdefault(
+                "r", gateways[b.agent].call(b.tool, {"arguments": b.args, "_meta": {}})), daemon=True)
+            t.start()
+            new = None
+            while t.is_alive() and new is None:          # finished, or held and now waiting
+                new = next((a for a in db.pending_approvals()
+                            if a["id"] not in before and a["agent_id"] == b.agent), None)
+                time.sleep(0.02)
+            if new is not None and t.is_alive():
+                got = f"held:{new['rule']}"
+                waiting.append((b, t, box))
             else:
-                got = "allow" if not is_error else f"error: {first}"
+                t.join()
+                got = classify(*box["r"])
             b.result = got
             mark = "ok " if got == b.expect else "!! "
             out(f"{mark}{b.agent:15} {b.tool:11} -> {got:17} | {b.say}")
             if got != b.expect:
-                problems.append(f"{b.agent} {b.tool} {b.args}: expected {b.expect}, got {got} ({text[:200]})")
+                problems.append(f"{b.agent} {b.tool} {b.args}: expected {b.expect}, got {got} "
+                                f"({str(box.get('r', ''))[:200]})")
 
     try:
         out(f"== prepare release 1.3: three concurrent Bob tasks, one kosha identity each (koshad {url})")
         play(STORY)
+        out(f"\n== {len(waiting)} agent call(s) held open, waiting for a human")
 
         pending = {a["agent_id"]: a for a in _get(f"{url}/approvals")}
-        human_tab = gateways["migrate-deploy"]
-        out("\n== in the migrate-deploy tab: \"Show me what Kosha is holding.\" -> kosha_review")
+        human_tab = gateways["test-fix"]
+        out("\n== \"Show me what Kosha is holding.\" -> kosha_review (read-only)")
         out("\n".join("   " + ln for ln in human_tab.call("kosha_review", {"arguments": {}, "_meta": {}})[1].splitlines()))
         mig, push = pending.get("migrate-deploy"), pending.get("test-fix")
         if not (mig and push):
@@ -167,10 +191,18 @@ def run(root: Path, out=print) -> list[str]:
             for aid, decision, note in ((push["id"], "deny", "main was already pushed"),
                                         (mig["id"], "approve_reset", None)):
                 status = _post(f"{url}/approvals/{aid}", {"decision": decision, "note": note}).get("status")
-                out(f"== human, on the approval page (passphrase): #{aid} {decision} -> {status}")
+                out(f"== human, on the approval panel (passphrase): #{aid} {decision} -> {status}")
                 if status != decision:
                     problems.append(f"approval #{aid} {decision}: got {status}")
             out("")
+            for b, t, box in waiting:                    # the open calls now finish on their own
+                t.join(30)
+                b.final = classify(*box["r"]) if "r" in box else "still waiting"
+                mark = "ok " if b.final == b.resolves else "!! "
+                out(f"{mark}{b.agent:15} {b.tool:11} -> {b.final:17} | {b.after}")
+                if b.final != b.resolves:
+                    problems.append(f"{b.agent} {b.tool}: expected the waiting call to end {b.resolves}, "
+                                    f"got {b.final} ({str(box.get('r', ''))[:200]})")
             play(AFTER_APPROVAL)
 
         time.sleep(1.0)                                  # let fs_guard see trailing events

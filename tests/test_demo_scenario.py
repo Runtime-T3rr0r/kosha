@@ -26,6 +26,9 @@ def test_demo_story_plays_as_scripted(tmp_path):
     assert ("test-fix", "git", "held:convergence") in beats
     assert ("migrate-deploy", "run_command", "held:escalation") in beats
     assert ("migrate-deploy", "deploy", "allow") in beats
+    # held calls stayed open and finished on their own once the human decided
+    finals = {(b.agent, b.tool, b.final) for b in rehearse.STORY if b.resolves}
+    assert finals == {("test-fix", "git", "denied_by_human"), ("migrate-deploy", "run_command", "allow")}
 
 
 def test_show_bundle_formats_real_approvals(tmp_path):

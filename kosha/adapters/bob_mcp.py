@@ -11,14 +11,17 @@ client fails closed and nothing runs.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import shlex
 import sqlite3
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import anyio
 import mcp.types as types
@@ -32,6 +35,7 @@ from kosha.system.action import Action
 IDENTITY_MODE = os.environ.get("KOSHA_IDENTITY_MODE", "per_mode_instance")
 KOSHA_ROOT = Path(__file__).resolve().parents[2]
 COMMAND_TIMEOUT = 270          # seconds; Bob's own execute_command max
+APPROVAL_WAIT = 1500           # seconds a held call waits for a human (Bob's MCP timeout: 1800s)
 MAX_OUTPUT = 20_000            # characters returned to the agent per stream
 MAX_ROWS = 200
 
@@ -49,9 +53,12 @@ def resolve_agent_id(raw_request: dict, server_instance_name: str) -> str:
 # one channel Bob always shows. The mode's roleDefinition repeats them in full.
 GATING = (" Gated by Kosha: each call is priced by its risk against a budget shared by the whole "
           "agent fleet; read-only calls are free, and Kosha, not you, decides what is too risky, so "
-          "don't ration normal work. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nothing ran: tell "
-          "the user and, once they say it is approved, retry this exact call. KOSHA DENIED means "
-          "retrying will not help: re-plan. Never work around a block with other tools.")
+          "don't ration normal work. A call that needs human approval waits while a human reviews it "
+          "(this can take minutes): just wait, you then get the real result, or KOSHA DENIED BY A "
+          "HUMAN with their note. A result starting with KOSHA HELD FOR HUMAN APPROVAL means nobody "
+          "decided in time and nothing ran: tell the user and, once they say it is approved, retry "
+          "this exact call. KOSHA DENIED means retrying will not help: re-plan. Never work around a "
+          "block with other tools.")
 
 
 def _schema(props: dict, required: list[str]) -> dict:
@@ -102,10 +109,17 @@ DECLARED = {t.name: set(t.input_schema["properties"]) for t in TOOLS}
 class Gateway:
     """Everything except the MCP wire protocol, so tests can drive it directly."""
 
-    def __init__(self, agent: str, session: str, workspace: str):
+    def __init__(self, agent: str, session: str, workspace: str,
+                 approval_wait: Optional[float] = None, poll: float = 1.0):
+        """approval_wait: seconds a held call waits for the human's decision before giving
+        up and returning KOSHA HELD (0 = never wait). Default KOSHA_APPROVAL_WAIT, else
+        APPROVAL_WAIT; keep it under Bob's MCP timeout minus the longest command."""
         self.agent = agent
         self.session = session
         self.workspace = os.path.realpath(workspace)
+        self.approval_wait = float(os.environ.get("KOSHA_APPROVAL_WAIT", APPROVAL_WAIT)
+                                   if approval_wait is None else approval_wait)
+        self.poll = poll
 
     def _path(self, p: str) -> str:
         return os.path.realpath(os.path.join(self.workspace, os.path.expanduser(p)))
@@ -157,6 +171,25 @@ class Gateway:
             return _run([*cmd, str(a.get("target", ""))], self.workspace)
         return False, f"unknown tool {action.tool}"
 
+    def wait_for_human(self, action_id: str) -> Optional[dict]:
+        """The approval created for this held action, once a human has decided it; None if
+        nobody decided within approval_wait (koshad unreachable meanwhile counts as waiting)."""
+        deadline = time.monotonic() + self.approval_wait
+        approval_id = None
+        while time.monotonic() < deadline:
+            try:
+                if approval_id is None:
+                    approval_id = next((a["id"] for a in client.approvals()
+                                        if a["action_id"] == action_id), None)
+                if approval_id is not None:
+                    state = client.approval_status(approval_id)
+                    if state["status"] != "pending":
+                        return state
+            except Exception:
+                pass
+            time.sleep(min(self.poll, max(deadline - time.monotonic(), 0)))
+        return None
+
     def call(self, name: str, raw_request: dict) -> tuple[bool, str]:
         """(is_error, text). Nothing executes unless koshad said allow."""
         if name not in TOOL_NAMES:
@@ -166,6 +199,16 @@ class Gateway:
             return _review()
         action = self.build_action(name, args, resolve_agent_id(raw_request, self.agent))
         d = client.decide(action)
+        if d.decision == "ask" and d.rule != "fail_closed" and self.approval_wait > 0:
+            # hold the call open (Bob's chat keeps waiting) until the human decides
+            human = self.wait_for_human(action.action_id)
+            if human and human["status"] == "deny":
+                return True, client.denied_by_human_text(human.get("note"))
+            if human and human["status"] in ("approve_once", "approve_reset"):
+                # the exact same call again: it matches the approval, which lets it through once
+                action = dataclasses.replace(action, action_id=uuid.uuid4().hex,
+                                             ts=datetime.now(timezone.utc).isoformat())
+                d = client.decide(action)
         if d.decision != "allow":
             return True, client.block_text(d)
         try:

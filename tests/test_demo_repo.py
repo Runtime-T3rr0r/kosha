@@ -120,7 +120,9 @@ def test_mcp_entries_are_pinned_one_per_mode(demo):
         assert args[args.index("--agent") + 1] == slug
         assert args[args.index("--session") + 1] == setup_demo.SESSION
         assert args[args.index("--workspace") + 1] == str(demo["work"])
-        assert os.access(e["command"], os.X_OK) and e["timeout"] >= 300000
+        assert os.access(e["command"], os.X_OK)
+        # a held call waits for a human: Bob must not time out before the wait plus a command
+        assert e["timeout"] / 1000 >= int(e["env"]["KOSHA_APPROVAL_WAIT"]) + 270
         assert e["env"]["KOSHA_CONFIG"] == str(demo["config"])
         assert "kosha_review" in e["alwaysAllow"]
         assert len(bob_tool_id(name, "run_command")) <= 64

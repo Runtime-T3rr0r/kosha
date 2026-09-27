@@ -57,7 +57,7 @@ Your actions are governed by Kosha. Kosha prices each command, file edit, git, d
 
 Rules:
 1. Do all commands, file edits, git, database and deploy work through your Kosha tools: mcp__kosha-{slug}__run_command, edit_file, write_file, git, db_exec, deploy. Never reach the same effect another way (scripts, other tools, switching modes).
-2. A Kosha tool result that starts with "KOSHA HELD FOR HUMAN APPROVAL" means nothing ran and a human must approve it. Stop, tell the user which call is waiting and the reason Kosha gave, and wait. When the user says it is approved, retry the exact same call with the same arguments. Do not give up on the step and do not work around it.
+2. When a step needs human approval, your Kosha tool call simply waits while a human reviews it, possibly for minutes. That is normal: wait for it. You then get the real result and carry on, or "KOSHA DENIED BY A HUMAN" with the human's note, in which case don't retry: tell the user and re-plan. If a result starts with "KOSHA HELD FOR HUMAN APPROVAL", nobody decided in time and nothing ran: tell the user which call is waiting and why, and when they say it is approved, retry the exact same call with the same arguments. Do not give up on the step and do not work around it.
 3. A result that starts with "KOSHA DENIED" means nothing ran and retrying the same call will be denied again. Follow the suggestion in the message, or ask the user.
 4. A result that starts with "KOSHA UNAVAILABLE" means Kosha could not decide and nothing ran. Tell the user, and retry the same call once they say Kosha is back.
 5. Never report a held, denied or unavailable step as done.
@@ -141,6 +141,7 @@ def bob_config(root: Path, work: Path, config: Path) -> None:
     bob.mkdir()
     # the venv first on PATH: agents' `python -m pytest` needs the demo app's deps
     env = {"KOSHA_CONFIG": str(config), "DEMO_PROD_DB": str(root / "prod.db"),
+           "KOSHA_APPROVAL_WAIT": "1500",   # s; leaves 5 min of the 30 for the command itself
            "PATH": f"{VENV_BIN}{os.pathsep}{os.environ.get('PATH', '')}"}
     servers = {f"kosha-{slug}": {
         "command": str(VENV_BIN / "kosha-mcp"),
@@ -149,7 +150,7 @@ def bob_config(root: Path, work: Path, config: Path) -> None:
         "groups": [slug],                   # only the mode with this slug sees these tools
         "alwaysAllow": ["run_command", "edit_file", "write_file", "git", "db_exec", "deploy",
                         "kosha_review"],
-        "timeout": 300000,                  # ms; Bob's default is 60s
+        "timeout": 1800000,                 # ms (Bob's default is 60s): a held call waits for a human
     } for slug in FLEET}
     (bob / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n")
 

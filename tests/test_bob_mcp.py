@@ -40,8 +40,9 @@ def ws(tmp_path, monkeypatch):
     return w
 
 
-def gw(ws, agent="sub1"):
-    return Gateway(agent, "fleet1", str(ws))
+def gw(ws, agent="sub1", approval_wait=0):
+    # 0 = the old bounce behaviour; the waiting behaviour has its own tests below
+    return Gateway(agent, "fleet1", str(ws), approval_wait=approval_wait, poll=0.05)
 
 
 def raw(args):
@@ -304,3 +305,127 @@ def test_review_with_koshad_down(dead_koshad, ws):
 def test_there_is_no_approve_tool():
     # approving needs the human's passphrase, which must never enter the agent's chat
     assert not any("approve" in t.name for t in bob_mcp.TOOLS)
+
+
+
+# --- a held call waits in the chat for the human's decision ---
+
+def call_in_background(g, name, args):
+    import threading
+    box = {}
+    t = threading.Thread(target=lambda: box.setdefault("r", g.call(name, raw(args))))
+    t.start()
+    return t, box
+
+
+def wait_pending(k, n=1, timeout=5):
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        pending = k.db.pending_approvals()
+        if len(pending) >= n:
+            return pending
+        time.sleep(0.02)
+    raise AssertionError("nothing got held")
+
+
+def test_approved_held_call_runs_in_the_same_call(live_koshad, ws):
+    target = ws / "run.sh"
+    target.write_text("echo hi\n")
+    target.chmod(0o644)
+    t, box = call_in_background(gw(ws, approval_wait=10), "run_command", {"command": "chmod 777 run.sh"})
+    [ap] = wait_pending(live_koshad)
+    assert t.is_alive() and stat.S_IMODE(target.stat().st_mode) == 0o644      # still waiting, not run
+    live_koshad.db.resolve_approval(ap["id"], "approve_once")
+    t.join(10)
+    assert box["r"][0] is False                                                # ran, no error
+    assert stat.S_IMODE(target.stat().st_mode) == 0o777
+    assert live_koshad.db.approval(ap["id"])["status"] == "consumed"           # used exactly once
+
+
+def test_denied_held_call_returns_the_humans_note(live_koshad, ws):
+    t, box = call_in_background(gw(ws, approval_wait=10), "run_command", {"command": "chmod 777 run.sh"})
+    [ap] = wait_pending(live_koshad)
+    live_koshad.db.resolve_approval(ap["id"], "deny", "not on a friday")
+    t.join(10)
+    is_error, text = box["r"]
+    assert is_error and text.startswith("KOSHA DENIED BY A HUMAN") and "not on a friday" in text
+
+
+def test_nobody_decides_in_time_falls_back_to_held(live_koshad, ws):
+    import time
+    start = time.monotonic()
+    is_error, text = gw(ws, approval_wait=0.5).call("run_command", raw({"command": "chmod 777 run.sh"}))
+    assert is_error and text.startswith("KOSHA HELD FOR HUMAN APPROVAL")
+    assert 0.4 < time.monotonic() - start < 5
+    [ap] = live_koshad.db.pending_approvals()                                  # still waiting for a human
+    assert ap["status"] == "pending"
+
+
+def test_hard_deny_and_fail_closed_never_wait(live_koshad, ws):
+    import time
+    start = time.monotonic()
+    is_error, text = gw(ws, approval_wait=30).call("run_command", raw({"command": "rm -rf /"}))
+    assert is_error and text.startswith("KOSHA DENIED") and time.monotonic() - start < 3
+
+
+def test_koshad_down_never_waits(dead_koshad, ws):
+    import time
+    start = time.monotonic()
+    is_error, text = gw(ws, approval_wait=30).call("run_command", raw({"command": "ls"}))
+    assert is_error and text.startswith("KOSHA UNAVAILABLE") and time.monotonic() - start < 5
+
+
+def test_two_agents_wait_independently(live_koshad, ws):
+    (ws / "a.sh").write_text("x")
+    (ws / "b.sh").write_text("x")
+    ta, a = call_in_background(gw(ws, "sub1", 10), "run_command", {"command": "chmod 777 a.sh"})
+    tb, b = call_in_background(gw(ws, "sub2", 10), "run_command", {"command": "chmod 777 b.sh"})
+    pending = {p["agent_id"]: p for p in wait_pending(live_koshad, 2)}
+    live_koshad.db.resolve_approval(pending["sub2"]["id"], "deny", "no")
+    tb.join(10)
+    assert b["r"][1].startswith("KOSHA DENIED BY A HUMAN") and ta.is_alive()     # sub1 still waiting
+    live_koshad.db.resolve_approval(pending["sub1"]["id"], "approve_once")
+    ta.join(10)
+    assert a["r"][0] is False
+
+
+def test_approval_status_endpoint(live_koshad, ws):
+    gw(ws).call("run_command", raw({"command": "chmod 777 run.sh"}))
+    [ap] = live_koshad.db.pending_approvals()
+    import requests
+    r = requests.get(f"{live_koshad.url}/approvals/{ap['id']}", timeout=5).json()
+    assert r["status"] == "pending" and r["action_id"] == ap["action_id"] and "bundle" not in r
+    assert requests.get(f"{live_koshad.url}/approvals/9999", timeout=5).status_code == 404
+
+
+def test_description_tells_agents_a_held_call_waits():
+    for t in (t for t in bob_mcp.TOOLS if t.name in bob_mcp.ACTION_TOOLS):
+        assert "waits while a human reviews it" in t.description and "KOSHA DENIED BY A HUMAN" in t.description
+
+
+def test_waiting_through_the_real_mcp_stdio_server(live_koshad, ws):
+    # what Bob does: a tool call over stdio stays open while the human decides, then returns
+    import threading
+    import time
+    (ws / "run.sh").write_text("x")
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "kosha.adapters.bob_mcp", "--agent", "migrate-deploy", "--session", "fleet1",
+              "--workspace", str(ws)],
+        env={**os.environ, "KOSHAD_URL": live_koshad.url, "KOSHA_APPROVAL_WAIT": "30"})
+
+    def human():
+        for _ in range(200):
+            pending = live_koshad.db.pending_approvals()
+            if pending:
+                time.sleep(1.0)                                   # the call is visibly waiting
+                live_koshad.db.resolve_approval(pending[0]["id"], "approve_once")
+                return
+            time.sleep(0.05)
+    threading.Thread(target=human, daemon=True).start()
+    start = time.monotonic()
+    _, [res] = asyncio.run(_mcp_calls(params, [("run_command", {"command": "chmod 777 run.sh && echo ran"})]))
+    assert not res.is_error and "ran" in res.content[0].text, res.content[0].text
+    assert time.monotonic() - start > 1.0                         # it really waited
+    assert stat.S_IMODE((ws / "run.sh").stat().st_mode) == 0o777

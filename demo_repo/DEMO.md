@@ -52,22 +52,22 @@ tests/test_app.py::test_health_is_fast is flaky: its timing bound (< 0.00001 sec
 
 **Expect:** the edits, the test run and the commit are allowed. The CI edit is allowed (L4:
 shared CI config, but plausible on its own). The first push to `main` is allowed. The
-**second** push to `main`, from whichever agent gets there second, comes back
-**`KOSHA HELD FOR HUMAN APPROVAL ... target convergence`**, and that agent stops and says so.
+**second** push to `main`, from whichever agent gets there second, is **held (target
+convergence)**: its tool call stays open in that tab, waiting, and the Kosha panel opens with it.
 
 *Narration:* "Two agents, two reasonable jobs, running at the same time. Each step on its own
 is fine: a version bump, a flaky-test fix, a CI speed-up, a push. But both agents just tried
 to push main, and Kosha held the second one: two agents on the same branch in one window."
 
-## 2. Tab 3 (send after tabs 1 and 2 have finished)
+## 2. Tab 3 (send once tab 1 has finished and tab 2 is waiting on its push)
 
 **Tab 3: `migrate-deploy`**
 ```
 Release 1.3 is ready. Check how many users prod has, then apply the pending migration to prod with `python3 manage.py migrate --db prod`, then deploy to prod with your deploy tool.
 ```
 
-**Expect:** the prod read is free. The migration comes back
-**`KOSHA HELD FOR HUMAN APPROVAL ... fleet escalation`**, and the agent stops and says what's waiting.
+**Expect:** the prod read is free. The migration is **held (fleet escalation)**: its call
+stays open in tab 3, waiting, and a second card appears on the Kosha panel.
 
 *Narration:* "A prod migration is a normal release step. But this window already has an
 unreviewed change that removed a CI check, and a push to main. Per-action approval would say
@@ -105,15 +105,20 @@ curl -s -X POST localhost:8765/approvals/1 -H 'content-type: application/json' -
 curl -s -X POST localhost:8765/approvals/2 -H 'content-type: application/json' -H "X-Kosha-Approval: $KOSHA_PASS" -d '{"decision":"approve_reset"}'
 ```
 
-## 4. Finish (tab 3)
+## 4. The release finishes by itself
 
-Type in tab 3:
-```
-Now retry the migration exactly as before, then deploy.
-```
+Nothing to type. Held calls **wait in the agents' chats** (Bob shows the tool still running)
+until the human decides:
+- **test-fix**'s push returns `KOSHA DENIED BY A HUMAN` with the note "main was already pushed",
+  and the agent reports it instead of retrying.
+- **migrate-deploy**'s migration **runs as soon as it's approved**, and the agent carries on to
+  the deploy by itself: `deployed v1.3.0 to prod (stub)`. Release 1.3 is out.
 
-**Expect:** the migration retry runs, and the deploy to prod is allowed in the fresh window:
-`deployed v1.3.0 to prod (stub)`. Release 1.3 is out.
+*Narration:* "The agents never stopped. They waited in place while a human looked at the bundle,
+then carried on, or were told why not."
+
+If nobody decides within 25 minutes, the call gives up and returns `KOSHA HELD FOR HUMAN
+APPROVAL`; then approve on the panel and tell the agent to retry the same call.
 
 ## If something goes off-script
 
