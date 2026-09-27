@@ -307,6 +307,13 @@ class KoshaDB:
                  "status": r["status"], "created_at": r["created_at"], "rule": r["rule"],
                  "reason": r["reason"], "suggestion": r["suggestion"]} for r in rows]
 
+    def approval(self, approval_id: int) -> Optional[dict]:
+        """One approval's current state (for an adapter waiting on a human), no bundle."""
+        with self._conn() as c:
+            r = c.execute("SELECT id, action_id, status, note FROM approvals WHERE id=?",
+                          (approval_id,)).fetchone()
+        return dict(r) if r else None
+
     def resolve_approval(self, approval_id: int, decision: str, note: Optional[str] = None) -> dict:
         """approve_once: the agent's next identical /decide is allowed and charged.
         approve_reset: same, and the session's window is reset to zero spend.

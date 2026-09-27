@@ -4,3 +4,4 @@ __pycache__/
 .kosha_quarantine/
 .bob/
 .vscode/
+.venv

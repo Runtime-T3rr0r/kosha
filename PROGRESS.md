@@ -514,6 +514,73 @@ A well-meaning agent told "this needs approval in Kosha" might try exactly this.
     - with the right one, Approve & reset plus Deny gave koshad exactly `#1 deny`, `#2 approve_reset`, and the page showed "Nothing is held".
   - Tests: `tests/test_ui.py` (8): controls present, self-contained, no HTML sinks, no browser storage, the script parses (`node --check`), approvals carry the reason, the page's request flow gives 401 then 200.
   - **In-chat approval was tried and removed:** a `kosha_approve` MCP tool (never auto-approved, so Bob asks) was built (`cc41ccb`). It was removed (`9de5214`) because it can't hold the passphrase without putting it where the agent can read it. Bob also can't hide its "always allow" button for a single MCP tool: `forbiddenApprovalGroups` works per permission group, and every MCP tool shares `mcp`. `kosha_review` (read-only) stays.
+- **Bob: the Kosha extension (branch `bob-extension`). BUILT, not yet run inside Bob.**
+  - **Why:** in Bob, a localhost link clicked in chat opens the *default* browser, and nothing but an extension can open something inside Bob on its own when an event happens (the `bob` CLI has no open-URL option; workspace settings and MCP can't).
+  - `kosha/adapters/bob_extension/`: plain JavaScript, no dependencies, no build step.
+    - `core.js`: the logic, free of the VS Code API. An SSE parser for `/stream`. A `Monitor` that skips history at start-up (it reads `/stream?once=true` for the newest event id and opens no live stream until that has succeeded, so **holds from before Bob started never pop up**). It reconnects from the last id with backoff, ignores duplicate ids, and refreshes `/approvals` and `/sessions` for the status line.
+    - `extension.js`: the Bob glue. A status-bar item (`Kosha: 2 held · fleet 70/750`, amber when anything's held, "offline" when koshad is down; click to open). **On every new hold it opens the "Kosha approvals" panel beside the editor without taking focus**, plus a notification naming the agent, command and rule with a **Review** button. There's a `Kosha: Open Approvals` command.
+    - The panel frames koshad's own `/ui` page (CSP `default-src 'none'; frame-src <koshad>`), with `retainContextWhenHidden` so it stays unlocked while hidden. It adds no approval code: the passphrase is typed into the page and never passes through the extension.
+    - Settings: `kosha.koshadUrl`, `kosha.autoOpen`.
+  - **Packaging without network or vsce:** `build_vsix.py` writes `dist/kosha-bob-0.1.0.vsix` (runtime files only). **Bob's real installer accepted it** in an isolated `--extensions-dir`/`--user-data-dir` (`kosha.kosha-bob@0.1.0`); the user's Bob was untouched.
+  - **Tests:**
+    - Node, `test/*.test.js` (10): the parser (character-split chunks, CRLF, comments, multi-line data); history never pops up; duplicate ids ignored; koshad down at start-up means no live stream until the baseline succeeds; reconnect from the last id; and, with a fake `vscode` module, activation, the panel HTML/CSP/options and panel reuse. **Mutation-checked:** breaking the history skip fails 3 tests.
+    - pytest, `tests/test_bob_extension.py` (4): runs the Node tests, checks the vsix structure and manifest, and **runs `core.js` against a real koshad**. A hold made before the watcher started did not pop up; a convergence hold made while it was watching popped up as "Kosha held test-fix: git push origin main (convergence)"; the status reached 2 held.
+  - **Not verified (needs the Bob GUI):** that the panel actually opens by itself inside Bob, and that Bob lets a webview frame `http://127.0.0.1:8765`. If framing is blocked, the fallback is rendering the approval UI directly in the webview (~45 min).
+- **Wait-vs-bounce: DECIDED "wait" (2026-09-27, after a live Bob run showed held chats just ending).** A held kosha-mcp call now **stays open**: Bob shows the tool running and the agent's chat waits.
+  - kosha-mcp polls the new read-only `GET /approvals/{id}` every second.
+  - **On approve** it re-submits the exact same call, which matches the approval and is allowed once. It executes, and the agent gets the real result and **carries on by itself** (no "retry" message needed).
+  - **On deny** it returns `KOSHA DENIED BY A HUMAN` with the human's note.
+  - **If nobody decides** within `KOSHA_APPROVAL_WAIT` (demo 1500s), it falls back to the old `KOSHA HELD` text.
+  - Hard denies, fail-closed and koshad-down never wait. Bob's MCP `timeout` is now 1800000 ms in the demo config (wait plus a 270s command); a test enforces that ratio.
+  - Agent text (tool descriptions, role rule 2) now says a held call waits, possibly for minutes, and what each outcome means. The panel's confirmation says "Its waiting call runs now."
+  - **The hooks don't wait:** a 10s hook timeout makes it impossible. Claude Code gets its native ask prompt instead (not started).
+  - Tests: 9 new in `tests/test_bob_mcp.py`:
+    - approved runs in the same call, and the approval is consumed
+    - denied returns the note
+    - timeout falls back to held with the approval still pending
+    - hard deny and fail-closed return immediately; koshad down never waits
+    - two agents wait independently
+    - the status endpoint works
+    - the description text
+    - **end to end through the real `kosha-mcp` stdio server:** the call waited more than 1s, then ran on approval
+  - **The rehearsal now drives the waiting flow:** held calls stay open in background threads; after the human's decisions the push ends `denied_by_human` and the migration runs with no retry, then deploy. `test_demo_scenario` asserts both endings. Suite: 932 passed.
+  - **Known limit:** if the human cancels the tool call in Bob while it's waiting, kosha-mcp keeps polling until the timeout (cancellation isn't propagated). It's harmless: nothing runs without an approval, and an approval after cancelling would run the call with nobody reading the result.
+- **Ctrl+C now stops koshad in ~0.3s (was: hung forever).** Cause: `/stream` connections from the approval panel and the Bob extension never end, and uvicorn's graceful shutdown waits for every connection ("Waiting for connections to close"). Fix: koshad's server sets a shutdown flag on SIGINT/SIGTERM, so open streams end within 0.5s; graceful shutdown is capped at 2s as a backstop; and the final re-raised KeyboardInterrupt is swallowed, so there's no traceback. Test: `tests/test_koshad_shutdown.py` drives the real `koshad` binary in a pty with 0 and 2 open streams: stopped under 5s, no traceback. Mutation-checked: removing the flag fails the with-streams case.
+- **`Makefile`:** `make start` (stop any old koshad, fresh demo world and ledger, run koshad in the foreground), `make start-keep`, `make stop`, `make reset`, `make status`, `make rehearse`, `make test`, `make extension`. `make stop` finds the process on the port, **only kills it if it's koshad** (it refused a non-Kosha server in testing), sends SIGINT, waits up to 5s for the port to free, then SIGKILL. Verified on isolated ports: a live koshad with an open stream stopped in 0.19s; nothing running; a foreign process left alone.
+- **Normal Bob tabs work as a fleet, with no custom modes (2026-09-27).** Found by re-reading Bob's hook code: the hook's `session_id` is the chat tab's **root task id**, and each "New Task" is its own root task. So kosha-hook now:
+  - charges each Bob tab as its own agent, `bob-<first 8 of the task id>`. This replaces the pooled `bob-native`; **the v1 "shared pool" limitation no longer applies to Bob's native tools.**
+  - puts all tabs on one fleet: `KOSHA_SESSION` if set, else `bob:<workspace>`. Before, every tab was accidentally its own fleet, so fleet rules couldn't fire across tabs.
+  - **waits for the human on a held call** (`KOSHA_HOOK_WAIT` s): approve, and the hook re-decides with the same action id (so PostToolUse settles it), then exits 0, and the native tool runs in the same chat; deny exits 2 with "KOSHA DENIED BY A HUMAN" plus the note; if nobody decides, it exits 2 with the held text.
+  - **Safety:** Bob's hook `timeout` has no upper bound (schema: positive number), and a timed-out hook **fails open**. So the hook's own alarm moves out to wait + 3s, still firing (exit 2) before Bob's timeout, and the demo sets Bob's timeout to wait + 300s (a test enforces the margin). Claude Code never waits (it gets its native ask). `KOSHA_HOOK_WAIT` unset means no wait.
+  - Demo config: the hook command is `KOSHA_SESSION=release-1.3 KOSHA_HOOK_WAIT=1500 <kosha-hook>` with `timeout: 1800`, so normal tabs share the fleet with the kosha-mcp modes.
+  - Tests (8 new in `tests/test_bob_hook.py`): two tabs are two agents in one fleet; the `KOSHA_SESSION` override works; **two normal tabs pushing main converge**; a held native call waits then runs on approval (the approval is consumed, PostToolUse confirms); deny returns the note; nobody deciding blocks in time; Claude Code and an unset wait never wait; and **the waiting hook through Bob's own hook runner** (it waited more than 1s, then Bob saw allow). Suite: 942 passed.
+  - The three fleet modes stay, as the optional "named agents" variant (readable names on the panel; kosha-mcp tools). DEMO.md offers both. Still needed per tab in normal mode: Bob's Permissions with Read/Edit/Execute on, so Bob doesn't prompt as well. Not set globally, since that would auto-approve shell commands in every project, including ones without Kosha.
+- **Demo moved to ONE "Kosha" mode (2026-09-27, the user's call; replaces the three fleet modes).**
+  - The `kosha` custom mode has Bob's native tools (`read, edit, execute, todo`), no `mode` group, and a role text adapted for native tools (held calls wait; the denied/unavailable/held meanings; never approve yourself; use `.venv/bin/python`). **Every tab in this mode is its own agent automatically** (via the hook's per-tab task id), and all tabs share fleet `release-1.3`.
+  - The per-mode kosha-mcp servers and `mcp.json` are gone from the demo. kosha-mcp stays in the codebase for MCP-only harnesses.
+  - **Caveat, stated plainly:** a mode can't turn on auto-approve (Bob modes carry only tools and a role). Edit/execute auto-approve is still needed; it's global only, since Bob has no per-workspace approval config. That's for the planned `kosha install bob` (auto-approve + global hook + global Kosha mode + extension, with backup/uninstall).
+  - Found while doing it: Bob's native shell doesn't have Kosha's venv on PATH (kosha-mcp used to add it), so `python -m pytest` would fail on camera. `setup_demo.py` now links `work/.venv` to Kosha's environment (gitignored), and the role tells agents to use `.venv/bin/python`. Tested: the link runs the app's tests.
+  - **The rehearsal still drives the story through kosha-mcp** with named agents. That checks pricing and policy, which are identical on either path. The hook path has its own tests, including Bob's hook runner.
+  - **Not yet verified live:** the hook actually firing inside Bob for a native edit. Pending the user's run.
+- **Kosha mode back on Kosha's own tools, with per-tab identity stamped by a global hook (2026-09-27, after the live run).**
+  - **Live findings that forced it:**
+    1. The native-tool path **never reached koshad**: 0 events while the agent "edited 2 files", although the hook config was in place and `~/Repos/kosha` is on Bob's trust list. **Bob didn't run the workspace hook**, cause unknown.
+    2. Bob's "Execute" auto-approve covers only commands on its prefix allow-list (`cat`, `git log`, ...), so `git add && git commit` prompts regardless. **Native tools can't be made prompt-free.**
+  - **Now:**
+    - The `kosha` mode is `read, todo, mcp` with **one kosha-mcp server** pinned to it (`groups: [kosha]`, `alwaysAllow` all its tools, 30 min timeout): **Bob never asks; Kosha alone decides; held calls wait in the chat.** This path is proven live.
+    - **Per-tab identity** comes from a **global** PreToolUse hook matching only `^mcp__kosha__`. kosha-hook returns `updatedInput` with `_kosha_agent: bob-<task id>` (overwriting any agent-written value), and kosha-mcp uses it (format-checked; otherwise it uses the instance name). The stamp needs no koshad and gates nothing, so it can't break other projects.
+    - Installed by **`make bob-install`** (`kosha/adapters/bob_install.py`: backup, idempotent, keeps other settings, also ensures `mcp`/`todo` auto-approve); **`make bob-uninstall`** removes only our entry. **Installed on this machine.**
+    - Without the hook, everything still works with all tabs as one agent, `kosha`.
+  - **Tests:**
+    - the stamp: output format, forged value overwritten, no koshad needed
+    - **Bob's own hook runner applies it** (its `updatedInput` carries the stamp; native tools untouched)
+    - kosha-mcp honours valid stamps and ignores malformed ones, and never puts the stamp in `raw`
+    - two stamped tabs on one server converge
+    - an approved retry from the same tab matches
+    - installer: idempotent, keeps others, backs up, Bob's strict schema; uninstall removes only ours
+    - demo config: one mode on Kosha tools, one pinned, never-prompted server that launches with the 7 tools
+    - Suite: 952 passed.
+  - **Not verified live:** that real Bob applies the `updatedInput` to an MCP call. The source path is `P2r`: `if (m?.updatedInput) n.arguments = m.updatedInput`, before the tool runs. Check in the run: the panel should show `bob-…` names, not `kosha`.
 - **OpenCode:** never built (the stretch goal, last in the cut order).
 
 ## Next (task 11 onward), not started

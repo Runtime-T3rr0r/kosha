@@ -57,6 +57,9 @@ NEXT_HELD = ("Next step: stop, tell the user which call is waiting and why, and 
              "same arguments. Do not work around it with other tools, scripts or commands.")
 NEXT_DENIED = ("Next step: re-plan using the suggestion above, or ask the user. Do not work "
                "around it with other tools, scripts or commands.")
+DENIED_BY_HUMAN = "KOSHA DENIED BY A HUMAN: nothing was run."
+NEXT_DENIED_BY_HUMAN = ("Next step: don't retry this call. Tell the user, and re-plan around it "
+                        "using the human's note if there is one.")
 NEXT_UNAVAILABLE = ("Next step: tell the user Kosha is not responding, and retry this exact call "
                     "once they say it is back. Do not work around it.")
 
@@ -77,9 +80,51 @@ def block_text(d: Decision) -> str:
 
 # --- the approval queue (read-only), for kosha-mcp's kosha_review tool ---
 
+def approval_status(approval_id: int, timeout: float = 2.0) -> dict:
+    """{id, action_id, status, note} of one approval. Raises if koshad doesn't answer."""
+    r = requests.get(f"{KOSHAD_URL}/approvals/{approval_id}", timeout=timeout)
+    r.raise_for_status()
+    return r.json()
+
+
 def approvals(timeout: float = 2.0) -> list[dict]:
     """Pending approvals with their bundles. Raises requests.RequestException if koshad
     doesn't answer; callers report that, nothing is approved by default."""
     r = requests.get(f"{KOSHAD_URL}/approvals", timeout=timeout)
     r.raise_for_status()
     return r.json()
+
+
+def denied_by_human_text(note: str | None) -> str:
+    """Agent-facing text when a human denied a held call the agent was waiting on."""
+    body = f"Note from the human: {note}" if note else "The human left no note."
+    return f"{DENIED_BY_HUMAN}\n{body}\n{NEXT_DENIED_BY_HUMAN}"
+
+
+def wait_for_human(action_id: str, wait: float, poll: float = 1.0) -> dict | None:
+    """Block until a human decides the approval created for this held action; returns
+    {id, action_id, status, note}, or None if nobody decided within `wait` seconds.
+    koshad being unreachable meanwhile counts as still waiting.
+    The approval is created in the same transaction as the "ask", so if koshad answers and
+    it isn't there (or later answers 404), it's gone: the ledger was reset. Stop waiting then,
+    instead of polling a missing approval until the deadline. Nothing runs either way.
+    """
+    import time
+    deadline = time.monotonic() + wait
+    approval_id = None
+    while time.monotonic() < deadline:
+        try:
+            if approval_id is None:
+                approval_id = next((a["id"] for a in approvals() if a["action_id"] == action_id), None)
+                if approval_id is None:
+                    return None                          # koshad answered: no such approval
+            state = approval_status(approval_id)
+            if state["status"] != "pending":
+                return state
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return None                              # the approval was deleted (ledger reset)
+        except Exception:
+            pass                                         # koshad unreachable: keep waiting
+        time.sleep(min(poll, max(deadline - time.monotonic(), 0)))
+    return None
