@@ -159,6 +159,16 @@ def bob_config(root: Path, work: Path, config: Path) -> None:
     (bob / "custom_modes.yaml").write_text(
         yaml.safe_dump({"customModes": modes}, sort_keys=False, width=100, allow_unicode=True))
 
+    # Bob/VS Code workspace settings: localhost links (the approval page) open inside Bob,
+    # and AI chat agents get no tools to drive the Integrated Browser, so none can click
+    # Approve on an unlocked approval page
+    vscode = work / ".vscode"
+    vscode.mkdir()
+    (vscode / "settings.json").write_text(json.dumps({
+        "workbench.browser.openLocalhostLinks": True,
+        "workbench.browser.enableChatTools": False,
+    }, indent=2) + "\n")
+
     hook = {"type": "command", "command": str(VENV_BIN / "kosha-hook"), "timeout": 10}
     hooks = {event: [{"matcher": NATIVE_MATCHER, "hooks": [hook]}]
              for event in ("PreToolUse", "PostToolUse")}

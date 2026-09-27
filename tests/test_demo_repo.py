@@ -220,3 +220,11 @@ def test_agents_workspace_has_no_demo_tooling(demo):
         assert leaked not in work_files
     tracked = subprocess.run(["git", "ls-files"], cwd=demo["work"], capture_output=True, text=True).stdout
     assert "DEMO.md" not in tracked and "rehearse.py" not in tracked
+
+
+def test_workspace_settings_open_localhost_in_bob_and_deny_agents_browser_tools(demo):
+    cfg = json.loads((demo["work"] / ".vscode" / "settings.json").read_text())
+    assert cfg["workbench.browser.openLocalhostLinks"] is True
+    assert cfg["workbench.browser.enableChatTools"] is False
+    tracked = subprocess.run(["git", "ls-files"], cwd=demo["work"], capture_output=True, text=True).stdout
+    assert ".vscode" not in tracked

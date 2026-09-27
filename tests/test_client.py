@@ -126,3 +126,10 @@ def test_hook_failure_text_matches_client_unavailable_text():
 def test_held_text_does_not_assume_a_dashboard():
     # approval may happen in the dashboard or via the API; the agent text must hold for both
     assert "dashboard" not in client.NEXT_HELD.lower()
+
+
+def test_held_text_links_the_approval_page():
+    held = client.block_text(dec("ask", "escalation"))
+    assert f"{client.KOSHAD_URL}/ui" in held
+    assert "/ui" not in client.block_text(dec("deny", "hard_deny"))
+    assert "/ui" not in client.block_text(client.fail_closed())      # koshad is down: no page

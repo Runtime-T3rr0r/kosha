@@ -160,14 +160,15 @@ def control_plane_files() -> set[str]:
 
 
 def is_control_plane_path(path: str, cwd: str = "") -> bool:
-    """The ledger DB, Kosha config, anything under a .bob/ dir, or Claude Code settings."""
+    """The ledger DB, Kosha config, anything under a .bob/ dir, Claude Code settings, or
+    VS Code/Bob workspace settings (they can re-enable agent browser tools)."""
     if not path:
         return False
     p = abspath(path, cwd) or os.path.normpath(os.path.expanduser(path))
     parts = Path(p).parts
     if ".bob" in parts:
         return True
-    if ".claude" in parts and Path(p).name.startswith("settings"):
+    if (".claude" in parts or ".vscode" in parts) and Path(p).name.startswith("settings"):
         return True
     return p in control_plane_files() or bool(CONTROL_FILE.search(p))
 

@@ -41,7 +41,7 @@ def test_self_approval_routes_are_held(command):
     assert level(raw={"command": command}) == 5, command
 
 
-@pytest.mark.parametrize("path", [".bob/custom_modes.yaml", ".bob/settings.json",
+@pytest.mark.parametrize("path", [".bob/custom_modes.yaml", ".bob/settings.json", ".vscode/settings.json",
                                   "/home/u/.claude/settings.local.json", LEDGER, "/w/.demo/kosha.demo.yaml"])
 def test_file_tool_writes_to_control_plane_are_held(path):
     assert level("write_file", {"path": path}, [path]) == 5

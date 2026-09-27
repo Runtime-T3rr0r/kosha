@@ -70,6 +70,8 @@ def block_text(d: Decision) -> str:
     else:
         head, nxt = DENIED, NEXT_DENIED
     body = " ".join(x for x in (d.reason, d.suggestion or "") if x)
+    if d.decision == "ask" and d.rule != "fail_closed":
+        return f"{head}\n{body}\nThe human reviews it on the Kosha approval page: {KOSHAD_URL}/ui\n{nxt}"
     return f"{head}\n{body}\n{nxt}"
 
 
