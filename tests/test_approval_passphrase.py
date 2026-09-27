@@ -78,6 +78,6 @@ def test_main_hands_the_passphrase_to_the_app_and_never_reads_env(monkeypatch):
     seen = {}
     monkeypatch.setattr(server, "create_app", lambda **kw: seen.update(kw) or "app")
     import uvicorn
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, *a, **kw: None)
     server.main()
     assert seen == {"approval_passphrase": SECRET}

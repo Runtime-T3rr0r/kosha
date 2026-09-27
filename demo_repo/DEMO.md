@@ -14,11 +14,11 @@ obvious fake like `sk-fake-demo-000`.
 
 ```sh
 cd ~/Repos/kosha
-python demo_repo/rehearse.py          # must end with "== REHEARSAL OK"
-kill $(ss -ltnp | grep ':8765 ' | grep -o 'pid=[0-9]*' | cut -d= -f2); while ss -ltn | grep -q ':8765 '; do sleep 0.5; done
-.venv/bin/python demo_repo/setup_demo.py
-.demo/start_koshad.sh                 # terminal 1: asks for an approval passphrase; leave it running
+make rehearse     # must end with "== REHEARSAL OK"
+make start        # terminal 1: stops any old koshad, fresh demo world + ledger, starts koshad
+                  # (asks for an approval passphrase); leave it running. Ctrl+C or `make stop` ends it.
 ```
+`make help` lists the rest (`stop`, `reset`, `status`, `extension`, `test`).
 
 koshad asks for an **approval passphrase** on its own terminal and keeps it only in memory.
 Approving needs it; the agents can't read it from anywhere, so they can't approve themselves.

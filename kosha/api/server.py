@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import sys
+import threading
 import typing
 import uuid
 from contextlib import asynccontextmanager
@@ -119,6 +120,7 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None,
 
     app = FastAPI(title="koshad", lifespan=lifespan)
     app.state.db = db
+    app.state.shutting_down = threading.Event()   # set on Ctrl+C: open /stream connections end
 
     @app.post("/decide")
     def decide(body: dict = Body(...)) -> dict:
@@ -166,7 +168,7 @@ def create_app(db: Optional[KoshaDB] = None, guard_root: Optional[str] = None,
     async def stream(last_id: int = 0, once: bool = False):
         async def gen():
             nonlocal last_id
-            while True:
+            while not app.state.shutting_down.is_set():
                 for e in db.events_after(last_id):
                     last_id = e["id"]
                     yield f"id: {e['id']}\nevent: {e['type']}\ndata: {json.dumps(e)}\n\n"
@@ -208,8 +210,21 @@ def ask_passphrase() -> Optional[str]:
 def main() -> None:
     import uvicorn
     passphrase = ask_passphrase()
-    uvicorn.run(create_app(approval_passphrase=passphrase), host="127.0.0.1",
-                port=int(os.environ.get("KOSHAD_PORT", 8765)))
+    app = create_app(approval_passphrase=passphrase)
+
+    class Server(uvicorn.Server):
+        # /stream connections (the approval panel, the Bob extension) never end on their
+        # own, so graceful shutdown would wait on them forever: tell them to end, and cap
+        # the wait at 2s as a backstop
+        def handle_exit(self, sig, frame):
+            app.state.shutting_down.set()
+            super().handle_exit(sig, frame)
+
+    try:
+        Server(uvicorn.Config(app, host="127.0.0.1", port=int(os.environ.get("KOSHAD_PORT", 8765)),
+                              timeout_graceful_shutdown=2)).run()
+    except KeyboardInterrupt:          # uvicorn re-raises the Ctrl+C after a clean shutdown
+        pass
 
 
 if __name__ == "__main__":
