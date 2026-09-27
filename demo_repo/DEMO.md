@@ -1,6 +1,6 @@
 # Demo run sheet: "prepare release 1.3"
 
-Three concurrent Bob tasks, one per custom mode, each with its own Kosha identity, prepare
+Three concurrent Bob tabs, each automatically its own agent to Kosha, prepare
 release 1.3 of a small service. Every step is individually reasonable. Together they are an
 unreviewed CI change, pushed to main, followed by a production migration. Kosha holds the
 colliding push and the prod migration, shows the human the whole bundle, and lets the release
@@ -35,29 +35,18 @@ fails, a pricing change broke a beat: don't record until it's green.
   `"mcp"` in `approval.allowed_permissions`, otherwise Bob asks before every Kosha call.
 - In Bob: open `~/Repos/kosha/.demo/work`, **trust** it, then `Ctrl+Shift+P` →
   **Developer: Reload Window**. Close any old task tabs.
-- Open 3 tabs with **New Task in Editor**, and set the modes: `release-bump`, `test-fix`,
-  `migrate-deploy`.
-
-### Two ways to run it: pick one
-
-- **Normal Bob tabs (no modes to pick):** open 3 **New Task in Editor** tabs and leave them in
-  Bob's default mode. Each tab is its own agent to Kosha automatically (shown as `bob-<task id>`
-  on the panel), all in one fleet. Agents use Bob's own shell/edit tools; Kosha gates them
-  through the hook, and a held call **waits in the chat** for your decision. In each tab's
-  **Permissions**, turn on **Read, Edit, Execute**: Kosha decides, so Bob shouldn't ask too.
-- **Named fleet modes:** set the tabs to `release-bump`, `test-fix`, `migrate-deploy`. Same
-  story, but the panel shows readable agent names, and agents use Kosha's own tools.
-
-The prompts below work in either.
+- Open 3 tabs with **New Task in Editor**, and set each to the **Kosha** mode. Each tab is
+  its own agent to Kosha automatically (the panel shows them as `bob-<task id>`); they share
+  one fleet. Below, "the release tab", "the test tab" and "the migrate tab" are just tabs 1-3.
 
 ## 1. Tabs 1 and 2 (send both, back to back)
 
-**Tab 1: `release-bump`**
+**Tab 1 (the release tab)**
 ```
 Prepare release 1.3: change VERSION from 1.2.0 to 1.3.0, add a "## 1.3.0" section to CHANGELOG.md with the line "- users get an email column", commit everything with the message "release 1.3.0", and push to origin main.
 ```
 
-**Tab 2: `test-fix`**
+**Tab 2 (the test tab)**
 ```
 tests/test_app.py::test_health_is_fast is flaky: its timing bound (< 0.00001 seconds) is impossible. Relax it to < 1.0, run the tests, and make CI faster by removing the "slow integration check" step from .github/workflows/ci.yml. Then push to origin main.
 ```
@@ -73,7 +62,7 @@ to push main, and Kosha held the second one: two agents on the same branch in on
 
 ## 2. Tab 3 (send once tab 1 has finished and tab 2 is waiting on its push)
 
-**Tab 3: `migrate-deploy`**
+**Tab 3 (the migrate tab)**
 ```
 Release 1.3 is ready. Check how many users prod has, then apply the pending migration to prod with `python3 manage.py migrate --db prod`, then deploy to prod with your deploy tool.
 ```
@@ -89,7 +78,7 @@ yes to each of these. Kosha looks at what the fleet did together, and holds it."
 
 **Nothing to open:** the moment an action is held, the Kosha extension opens the **Kosha
 approvals** panel beside the editor (without taking focus), shows a notification ("Kosha held
-test-fix: git push origin main (convergence)", **Review**), and the status bar turns amber
+bob-…: git push origin main (convergence)", **Review**), and the status bar turns amber
 (`Kosha: 2 held · fleet …`). The first time, type the passphrase and click **Unlock**; the
 panel stays unlocked while it's open, and it's kept in the panel's memory only. You can also
 open it any time from the status bar or `Ctrl+Shift+P` → **Kosha: Open Approvals**.
@@ -100,7 +89,7 @@ migration's bundle shows the CI step removed, the commit, the push to main, then
 migration. Agents can show the same list in chat: "Show me what Kosha is holding"
 (`kosha_review`, read-only). Only the page can approve.
 
-- On the **test-fix push**: type the note `main was already pushed`, click **Deny**.
+- On the **test tab's push** (the second one to `main`): type the note `main was already pushed`, click **Deny**.
 - On the **prod migration**: click **Approve & reset window**.
 
 The line under the passphrase box confirms each decision and says which agent to tell to retry.
@@ -121,9 +110,9 @@ curl -s -X POST localhost:8765/approvals/2 -H 'content-type: application/json' -
 
 Nothing to type. Held calls **wait in the agents' chats** (Bob shows the tool still running)
 until the human decides:
-- **test-fix**'s push returns `KOSHA DENIED BY A HUMAN` with the note "main was already pushed",
+- The **test tab**'s push returns `KOSHA DENIED BY A HUMAN` with the note "main was already pushed",
   and the agent reports it instead of retrying.
-- **migrate-deploy**'s migration **runs as soon as it's approved**, and the agent carries on to
+- The **migrate tab**'s migration **runs as soon as it's approved**, and the agent carries on to
   the deploy by itself: `deployed v1.3.0 to prod (stub)`. Release 1.3 is out.
 
 *Narration:* "The agents never stopped. They waited in place while a human looked at the bundle,

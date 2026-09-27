@@ -32,6 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import setup_demo  # noqa: E402
 
 SESSION = setup_demo.SESSION
+# Three agents. In Bob these are three tabs in the Kosha mode (named bob-<task id> there);
+# the rehearsal drives the same decisions through kosha-mcp with readable names.
+AGENTS = ("release-bump", "test-fix", "migrate-deploy")
 
 
 @dataclass
@@ -139,7 +142,7 @@ def run(root: Path, out=print) -> list[str]:
     problems: list[str] = []
     # held calls wait for the human, exactly as in Bob (up to a minute here)
     gateways = {a: bob_mcp.Gateway(a, SESSION, str(work), approval_wait=60, poll=0.05)
-                for a in setup_demo.FLEET}
+                for a in AGENTS}
     waiting: list[tuple[Beat, threading.Thread, dict]] = []
 
     def classify(is_error: bool, text: str) -> str:

@@ -110,36 +110,27 @@ def test_reset_rebuilds_from_scratch(tmp_path):
 
 # --- Bob config, checked against Bob's own rules ---
 
-def test_mcp_entries_are_pinned_one_per_mode(demo):
-    servers = json.loads((demo["work"] / ".bob" / "mcp.json").read_text())["mcpServers"]
-    assert set(servers) == {f"kosha-{s}" for s in setup_demo.FLEET}
-    for name, e in servers.items():
-        slug = name.removeprefix("kosha-")
-        args = e["args"]
-        assert e["groups"] == [slug]                                  # slug only, never "mcp"
-        assert args[args.index("--agent") + 1] == slug
-        assert args[args.index("--session") + 1] == setup_demo.SESSION
-        assert args[args.index("--workspace") + 1] == str(demo["work"])
-        assert os.access(e["command"], os.X_OK)
-        # a held call waits for a human: Bob must not time out before the wait plus a command
-        assert e["timeout"] / 1000 >= int(e["env"]["KOSHA_APPROVAL_WAIT"]) + 270
-        assert e["env"]["KOSHA_CONFIG"] == str(demo["config"])
-        assert "kosha_review" in e["alwaysAllow"]
-        assert len(bob_tool_id(name, "run_command")) <= 64
-
-
-def test_modes_are_valid_and_carry_the_gating_rules(demo):
+def test_one_kosha_mode_with_native_tools_and_the_gating_rules(demo):
     modes = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
-    assert [m["slug"] for m in modes] == list(setup_demo.FLEET)
-    for m in modes:
-        assert re.fullmatch(r"[a-zA-Z0-9-]+", m["slug"]) and m["name"]    # Bob's mode schema
-        assert set(m["groups"]) == {"read", "mcp"}                         # no edit/execute/mode
-        assert "never try to approve one yourself" in m["roleDefinition"]
-        role = m["roleDefinition"]
-        assert f"mcp__kosha-{m['slug']}__run_command" in role
-        for tag in ("KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED", "KOSHA UNAVAILABLE",
-                    "retry the exact same call"):
-            assert tag in role
+    assert [m["slug"] for m in modes] == ["kosha"]
+    m = modes[0]
+    assert re.fullmatch(r"[a-zA-Z0-9-]+", m["slug"]) and m["name"]           # Bob's mode schema
+    assert set(m["groups"]) == {"read", "edit", "execute", "todo"}            # native tools; no mode switching
+    role = m["roleDefinition"]
+    for tag in ("KOSHA HELD FOR HUMAN APPROVAL", "KOSHA DENIED BY A HUMAN", "KOSHA UNAVAILABLE",
+                "retry the exact same call", "never try to approve a held step yourself"):
+        assert tag in role
+    assert not (demo["work"] / ".bob" / "mcp.json").exists()                 # identity comes from the hook
+
+
+def test_venv_link_lets_agents_run_the_app_tests(demo):
+    link = demo["work"] / ".venv"
+    assert link.is_symlink() and (link / "bin" / "python").exists()
+    p = subprocess.run([str(link / "bin" / "python"), "-m", "pytest", "-q", "-p", "no:cacheprovider", "--color=no"],
+                       cwd=demo["work"], capture_output=True, text=True)
+    assert "1 failed, 3 passed" in p.stdout                                   # the app's deps are there
+    tracked = subprocess.run(["git", "ls-files"], cwd=demo["work"], capture_output=True, text=True).stdout
+    assert ".venv" not in tracked
 
 
 def test_hook_settings_match_bobs_strict_schema(demo):
@@ -159,21 +150,6 @@ def test_hook_settings_match_bobs_strict_schema(demo):
             m = re.compile(entry["matcher"])
             assert m.search("write_file") and m.search("execute_command")
             assert not m.search(bob_tool_id("kosha-release-bump", "write_file"))   # anchored
-
-
-def test_every_mcp_entry_launches_as_configured(demo):
-    from mcp import Client
-    from mcp.client.stdio import StdioServerParameters
-    servers = json.loads((demo["work"] / ".bob" / "mcp.json").read_text())["mcpServers"]
-
-    async def tools(e):
-        params = StdioServerParameters(command=e["command"], args=e["args"], env={**os.environ, **e["env"]})
-        async with Client(params) as c:
-            return {t.name for t in (await c.list_tools()).tools}
-
-    for e in servers.values():
-        assert asyncio.run(tools(e)) == {"run_command", "edit_file", "write_file", "git", "db_exec", "deploy",
-                                         "kosha_review"}
 
 
 # --- the scenario's steps are priced as the story needs ---
@@ -211,13 +187,11 @@ def test_reset_refuses_while_koshad_is_running(tmp_path, monkeypatch):
     assert (first["root"] / setup_demo.MARKER).exists() and first["work"].exists()   # untouched
 
 
-def test_roles_tell_agents_reads_are_free_and_not_to_ration(demo):
-    # live finding: agents refused 10x `git status` "to save budget" though Kosha priced it 0
-    modes = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
-    for m in modes:
-        role = m["roleDefinition"]
-        assert "Read-only steps" in role and "are free" in role
-        assert "Do not ration, skip or refuse normal work" in role
+def test_role_tells_agents_reads_are_free_and_not_to_ration(demo):
+    # live finding: agents refused free reads "to save budget"
+    [m] = yaml.safe_load((demo["work"] / ".bob" / "custom_modes.yaml").read_text())["customModes"]
+    assert "Read-only steps" in m["roleDefinition"] and "are free" in m["roleDefinition"]
+    assert "Do not ration, skip or refuse normal work" in m["roleDefinition"]
 
 
 def test_agents_workspace_has_no_demo_tooling(demo):
