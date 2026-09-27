@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+# dist/ in a source checkout; installed from a wheel, ROOT is site-packages, so build
+# into a temp dir instead of writing there
+OUT_DIR = ROOT / "dist" if (ROOT / "pyproject.toml").exists() else Path(tempfile.gettempdir()) / "kosha-bob"
 SHIP = ["package.json", "extension.js", "core.js", "README.md"]
 
 CONTENT_TYPES = """<?xml version="1.0" encoding="utf-8"?>
@@ -55,7 +59,7 @@ xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 """
 
 
-def build(out_dir: Path = ROOT / "dist") -> Path:
+def build(out_dir: Path = OUT_DIR) -> Path:
     pkg = json.loads((HERE / "package.json").read_text())
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{pkg['name']}-{pkg['version']}.vsix"
@@ -68,4 +72,4 @@ def build(out_dir: Path = ROOT / "dist") -> Path:
 
 
 if __name__ == "__main__":
-    print(build(Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "dist"))
+    print(build(Path(sys.argv[1]) if len(sys.argv) > 1 else OUT_DIR))
