@@ -429,3 +429,31 @@ def test_waiting_through_the_real_mcp_stdio_server(live_koshad, ws):
     assert not res.is_error and "ran" in res.content[0].text, res.content[0].text
     assert time.monotonic() - start > 1.0                         # it really waited
     assert stat.S_IMODE((ws / "run.sh").stat().st_mode) == 0o777
+
+
+def test_waiter_stops_when_its_approval_disappears(live_koshad, ws):
+    # regression: after a ledger reset the approval 404s; the waiter polled it until the deadline
+    import time
+    t, box = call_in_background(gw(ws, approval_wait=30), "run_command", {"command": "chmod 777 run.sh"})
+    [ap] = wait_pending(live_koshad)
+    start = time.monotonic()
+    with live_koshad.db._conn() as c:
+        c.execute("DELETE FROM approvals")                                   # what a reset does
+    t.join(10)
+    assert not t.is_alive() and time.monotonic() - start < 5
+    is_error, text = box["r"]
+    assert is_error and text.startswith("KOSHA HELD FOR HUMAN APPROVAL")      # nothing ran
+
+
+def test_waiter_keeps_waiting_while_koshad_is_briefly_down(monkeypatch):
+    from kosha.adapters import client
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        raise client.requests.ConnectionError("koshad restarting")
+    monkeypatch.setattr(client, "approvals", flaky)
+    import time
+    start = time.monotonic()
+    assert client.wait_for_human("x", wait=0.6, poll=0.1) is None
+    assert time.monotonic() - start >= 0.5 and calls["n"] >= 3                # it kept trying
