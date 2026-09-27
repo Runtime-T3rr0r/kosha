@@ -1,0 +1,137 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* slim top bar: identity, three views, the fleet being replayed */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  height: 64px;
+  padding: 0 var(--s6);
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--fg-inv);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.brand-name {
+  font-weight: 600;
+  font-size: 19px;
+}
+
+.tabs {
+  display: flex;
+  gap: var(--s1);
+  height: 100%;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s3);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-2);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+.tab.on {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.tab-badge {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--fg-inv);
+  font-size: var(--t-label);
+  font-weight: 700;
+}
+
+.session-pick {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.session-pick select {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  height: 36px;
+  padding: 0 var(--s2);
+  font-family: var(--mono);
+  font-size: var(--t-data);
+}
+
+.content {
+  flex: 1;
+  padding: 72px var(--s6) 120px;
+}
+
+.intro {
+  padding-bottom: var(--s6);
+}
+
+.intro-title {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.intro-lead {
+  margin: var(--s3) 0 0;
+  max-width: 760px;
+  font-size: 19px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+
+.intro-sub {
+  margin: var(--s3) 0 0;
+  max-width: 760px;
+  font-size: 15px;
+  color: var(--fg-2);
+}
+
+.spacer {
+  flex: 1;
+}

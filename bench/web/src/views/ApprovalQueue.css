@@ -1,0 +1,274 @@
+.aq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+}
+
+.aq-top {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--s5);
+  align-items: start;
+}
+
+.aq-card {
+  border-color: var(--ask);
+}
+
+.aq-card > .panel-head {
+  border-bottom-color: var(--ask);
+}
+
+.aq-status {
+  color: var(--ask);
+  font-weight: 700;
+}
+
+.aq-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s2);
+}
+
+.aq-cmd {
+  padding: var(--s2) var(--s3);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ask);
+  margin-bottom: var(--s3);
+}
+
+.aq-cmd .cmd {
+  font-size: var(--t-body);
+}
+
+.aq-reason,
+.aq-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--s3);
+}
+
+.aq-reason-text {
+  font-size: var(--t-head);
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.aq-suggest {
+  padding: var(--s2) var(--s3);
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+}
+
+.aq-suggest-text {
+  font-size: var(--t-head);
+  color: var(--accent);
+}
+
+.aq-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s3) var(--s4);
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.aq-targets {
+  font-size: var(--t-data);
+  padding-top: var(--s2);
+  color: var(--fg-2);
+}
+
+.aq-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding-top: var(--s3);
+}
+
+.aq-actions .btn {
+  height: 28px;
+  padding: 0 var(--s3);
+  font-size: var(--t-body);
+  font-weight: 600;
+}
+
+.aq-local {
+  font-size: var(--t-label);
+  margin-left: var(--s2);
+}
+
+.aq-deny {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin-top: var(--s3);
+  padding: var(--s2);
+  border: 1px solid var(--deny);
+}
+
+.aq-deny textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--t-data);
+  padding: var(--s2);
+  resize: vertical;
+}
+
+.aq-deny textarea:focus {
+  outline: 1px solid var(--deny);
+}
+
+.aq-deny .btn {
+  align-self: flex-start;
+}
+
+.aq-queue {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.aq-row,
+.aq-row-on {
+  cursor: pointer;
+}
+
+.aq-row-on td {
+  background: var(--accent-dim);
+}
+
+.aq-row:focus-visible,
+.aq-row-on:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.aq-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  font-size: var(--t-data);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+
+.aq-headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  padding: var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.aq-headline-text {
+  font-size: var(--t-fig);
+  font-weight: 600;
+}
+
+.aq-headline-stats {
+  display: flex;
+  gap: var(--s4);
+  font-size: var(--t-data);
+  color: var(--fg-2);
+}
+
+.aq-headline-stats b {
+  color: var(--fg);
+}
+
+.aq-dim td {
+  opacity: 0.5;
+}
+
+.aq-asked td {
+  background: var(--panel-2);
+  border-top: 1px solid var(--ask);
+  border-bottom: 1px solid var(--ask);
+}
+
+.aq-res-approve_once {
+  color: var(--allow);
+}
+
+.aq-res-approve_reset {
+  color: var(--ask);
+}
+
+.aq-res-deny {
+  color: var(--deny);
+}
+
+.aq-empty {
+  padding: var(--s5) var(--s3);
+}
+
+.aq-empty-title {
+  font-size: var(--t-fig);
+  font-weight: 600;
+  margin-bottom: var(--s2);
+}
+
+/* --- single column: the decision, the bundle behind it, then the rest --- */
+
+.aq {
+  gap: 0;
+}
+
+.aq-top {
+  display: contents;
+}
+
+.aq-card { order: 1; }
+.aq-bundle { order: 2; }
+.aq-queue { order: 3; max-height: none; overflow: visible; }
+.aq > .sec:last-child { order: 4; }
+
+/* the one boxed element on the page: the decision itself */
+.aq-card.sec {
+  margin-top: 0;
+  padding: var(--s5);
+  border: 1px solid var(--ask);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.aq-card .sec-head h2 {
+  font-size: 24px;
+}
+
+.aq-card .aq-reason-text {
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.aq-card .aq-suggest-text {
+  font-size: 16px;
+}
+
+.aq-card .aq-cmd {
+  font-size: 15px;
+  padding: var(--s3) var(--s4);
+}
+
+.aq-card .aq-actions {
+  margin-top: var(--s4);
+  gap: var(--s3);
+}
+
+.aq-card .aq-actions .btn {
+  height: 42px;
+  padding: 0 var(--s4);
+  font-size: 15px;
+}
+
+.aq-headline-text {
+  font-size: 19px;
+}

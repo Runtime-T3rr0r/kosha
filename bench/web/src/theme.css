@@ -1,0 +1,459 @@
+/* Kosha Console design system.
+ *
+ * Identity: an instrument panel, not a web page. Flat fields of ink, hairline rules,
+ * one accent (signal cyan) for interactive state, and a six-step severity scale that
+ * is the only other saturated color on screen. No gradients, no shadows, no rounded
+ * pills larger than 2px.
+ *
+ * Type scale (px): 10 / 11 / 12 / 14 / 18 / 24 — label / data / body / heading / figure / hero.
+ * Spacing: 4px grid (--s1..--s6 = 4, 8, 12, 16, 24, 32).
+ * Fonts: IBM Plex Sans for prose and labels, IBM Plex Mono for every command, argv,
+ * id, hash, cell and number column.
+ */
+
+:root {
+  /* ink */
+  --bg: #121821;
+  --panel: #172029;
+  --panel-2: #1b2530;
+  --raise: #222d39;
+  --rule: #26313d;
+  --rule-strong: #34414f;
+
+  /* text */
+  --fg: #e6e1d6;
+  --fg-2: #a7afb9;
+  --fg-3: #7f8995;
+  --fg-inv: #0a0d10;
+
+  /* accent + verdicts */
+  --accent: #6d8cff;
+  --accent-dim: #243157;
+  --allow: #57b36b;
+  --ask: #f0b03c;
+  --deny: #f0524d;
+
+  /* severity scale L0-L5: lightness-ordered so it survives greyscale, hue-separated
+   * so adjacent levels never collide. Always paired with the L-label. */
+  --l0: #55616d;
+  --l1: #5a7fa8;
+  --l2: #2fa39a;
+  --l3: #d9b13b;
+  --l4: #ec7a36;
+  --l5: #e8417a;
+
+  --l0-ink: #d5dde4;
+  --l1-ink: #0a0d10;
+  --l2-ink: #0a0d10;
+  --l3-ink: #0a0d10;
+  --l4-ink: #0a0d10;
+  --l5-ink: #0a0d10;
+
+  /* agent series (lanes, stacked gauge): distinct from the severity scale */
+  --a1: #7aa2f7;
+  --a2: #bb9af7;
+  --a3: #7dcfff;
+  --a4: #c0caf5;
+  --a5: #9ece6a;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 16px;
+  --s4: 24px;
+  --s5: 32px;
+  --s6: 48px;
+
+  --t-label: 12px;
+  --t-data: 13px;
+  --t-body: 14px;
+  --t-head: 16px;
+  --t-fig: 24px;
+  --t-hero: 30px;
+
+  --code: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* numbers and ids use the text face with tabular digits; only commands, paths
+   * and argv (.cmd) are set in monospace */
+  --mono: "IBM Plex Sans", system-ui, sans-serif;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --radius: 4px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.muted {
+  color: var(--fg-2);
+}
+
+.faint {
+  color: var(--fg-3);
+}
+
+.label {
+  font-size: var(--t-label);
+  color: var(--fg-2);
+  font-weight: 500;
+}
+
+/* --- panels --- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 52px;
+  padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: var(--t-head);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.panel-head .spacer {
+  flex: 1;
+}
+
+.panel-body {
+  padding: var(--s4);
+}
+
+/* --- tables --- */
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-data);
+}
+
+table.grid th {
+  font-size: var(--t-label);
+  color: var(--fg-2);
+  font-weight: 500;
+  text-align: left;
+  padding: 10px var(--s3);
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+
+table.grid td {
+  padding: 10px var(--s3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+table.grid tr:hover td {
+  background: var(--panel-2);
+}
+
+table.grid th.num,
+table.grid td.num {
+  text-align: right;
+}
+
+/* --- buttons --- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  height: 34px;
+  padding: 0 var(--s3);
+  background: var(--raise);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  font-size: var(--t-data);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+}
+
+.btn:focus-visible,
+.tab:focus-visible,
+.chip:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--fg-inv);
+}
+
+.btn.allow {
+  background: var(--allow);
+  border-color: var(--allow);
+  color: var(--fg-inv);
+}
+
+.btn.ask {
+  background: var(--ask);
+  border-color: var(--ask);
+  color: var(--fg-inv);
+}
+
+.btn.deny {
+  background: transparent;
+  border-color: var(--deny);
+  color: var(--deny);
+}
+
+/* --- level badge --- */
+
+.lvl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  font-weight: 700;
+}
+
+.lvl-0 { background: var(--l0); color: var(--l0-ink); }
+.lvl-1 { background: var(--l1); color: var(--l1-ink); }
+.lvl-2 { background: var(--l2); color: var(--l2-ink); }
+.lvl-3 { background: var(--l3); color: var(--l3-ink); }
+.lvl-4 { background: var(--l4); color: var(--l4-ink); }
+.lvl-5 { background: var(--l5); color: var(--l5-ink); }
+
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius);
+  border: 1px solid currentColor;
+  font-family: var(--mono);
+  font-size: var(--t-label);
+  font-weight: 600;
+}
+
+.verdict.allow { color: var(--allow); }
+.verdict.ask { color: var(--ask); }
+.verdict.deny { color: var(--deny); }
+.verdict.none { color: var(--fg-3); }
+
+/* --- command rendering --- */
+
+.cmd {
+  font-family: var(--code);
+  line-height: 1.5;
+  font-size: var(--t-data);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cmd .c-bin { color: #e6edf3; font-weight: 600; }
+.cmd .c-sub { color: var(--accent); }
+.cmd .c-flag { color: #d2a8ff; }
+.cmd .c-str { color: #a5d6a7; }
+.cmd .c-op { color: var(--ask); font-weight: 700; }
+.cmd .c-path { color: #9ecbff; }
+.cmd .c-arg { color: var(--fg-2); }
+.cmd .c-tool { color: var(--fg-3); }
+
+/* --- meters --- */
+
+.meter {
+  position: relative;
+  height: 10px;
+  background: var(--raise);
+  border: 1px solid var(--rule);
+  display: flex;
+  overflow: hidden;
+}
+
+.meter > span {
+  height: 100%;
+}
+
+.meter .tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--fg-2);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--panel);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.lvl,
+.verdict,
+.label {
+  white-space: nowrap;
+}
+
+/* --- sections (replace boxed panels) --- */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.sec {
+  padding: var(--s6) 0 0;
+  margin-top: var(--s6);
+  border-top: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.page > .sec:first-child,
+.page > :first-child {
+  margin-top: 0;
+}
+
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+
+.sec-head h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.3;
+}
+
+.sec-aside {
+  margin-left: auto;
+  color: var(--fg-2);
+  font-size: var(--t-data);
+}
+
+.sec-intro {
+  margin: var(--s2) 0 0;
+  max-width: 720px;
+  color: var(--fg-2);
+  font-size: 15px;
+}
+
+.sec-body {
+  padding-top: var(--s4);
+}
+
+.sec-fold {
+  padding-top: var(--s4);
+  margin-top: var(--s4);
+}
+
+.sec-fold > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: var(--s2) 0;
+}
+
+.sec-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sec-fold > summary h2 {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--fg-2);
+}
+
+.sec-fold > summary h2::before {
+  content: "+";
+  display: inline-block;
+  width: 20px;
+  color: var(--accent);
+}
+
+.sec-fold[open] > summary h2::before {
+  content: "\2212";
+}
+
+.sec-fold > summary:hover h2 {
+  color: var(--fg);
+}
+
+/* folded sections sit closer together, so the page ends in a quiet list */
+.sec-fold + .sec-fold {
+  margin-top: 0;
+  border-top: 1px solid var(--rule);
+}
+
+table.grid th {
+  background: var(--bg);
+}
