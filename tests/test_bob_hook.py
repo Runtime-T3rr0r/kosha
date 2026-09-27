@@ -38,7 +38,7 @@ def test_bob_native_tools_map_to_actions(live_koshad, tool, tool_input, action_t
     assert out == "" and code in (0, 2), err
     [a] = rows(live_koshad, "SELECT * FROM actions")
     assert (a["action_id"], a["harness"], a["agent_id"], a["tool"], json.loads(a["targets"])) == \
-        ("bob:bob-root-1:bt1", "bob", "bob-native", action_tool, targets)
+        ("bob:bob-root-1:bt1", "bob", "bob-bob-root", action_tool, targets)
 
 
 def test_execute_command_cwd_is_workspace_relative(live_koshad):
@@ -187,3 +187,114 @@ def test_denied_commands_gaps_exist(bob, command, approved):
     if one starts failing, Bob changed its matcher: re-check before claiming more coverage."""
     [verdict] = bob.denied_verdicts([{"command": command, "approved": approved, "denied": ["rm -rf"]}])
     assert verdict != "deny"
+
+
+# --- normal Bob tabs: each tab its own agent, one fleet, held calls wait ---
+
+import subprocess as _sp
+
+TAB_A, TAB_B = "f9d253378753d40b044f825aa5aa1ccf", "0760e04b8311a767c85ccc977acd8a71"   # real-shaped root task ids
+
+
+def tab(task, tool="execute_command", tool_input=None, tool_use_id="t1", cwd="/tmp/ws", event="PreToolUse"):
+    return {**bob_payload(tool, tool_input, event, tool_use_id, cwd), "session_id": task}
+
+
+def hook_bg(payload, env_extra):
+    p = _sp.Popen([sys.executable, "-m", "kosha.adapters.claude_hook"], stdin=_sp.PIPE, stdout=_sp.PIPE,
+                  stderr=_sp.PIPE, text=True, env={**os.environ, **env_extra})
+    p.stdin.write(json.dumps(payload))
+    p.stdin.close()
+    return p
+
+
+def finish(p, timeout=15):
+    p.wait(timeout)
+    return p.stdout.read(), p.stderr.read()
+
+
+def wait_pending(k, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        pending = k.db.pending_approvals()
+        if pending:
+            return pending
+        time.sleep(0.05)
+    raise AssertionError("nothing got held")
+
+
+def test_each_bob_tab_is_its_own_agent_in_one_fleet(live_koshad, monkeypatch):
+    monkeypatch.delenv("KOSHA_SESSION", raising=False)
+    run_hook(tab(TAB_A, tool_use_id="a"))
+    run_hook(tab(TAB_B, tool_use_id="b"))
+    got = rows(live_koshad, "SELECT agent_id, session_id FROM actions ORDER BY created_at")
+    assert [r["agent_id"] for r in got] == ["bob-f9d25337", "bob-0760e04b"]
+    assert {r["session_id"] for r in got} == {"bob:/tmp/ws"}                 # one shared fleet
+
+
+def test_kosha_session_env_names_the_fleet(live_koshad):
+    run_hook(tab(TAB_A), {"KOSHA_SESSION": "release-1.3"})
+    assert rows(live_koshad, "SELECT session_id FROM actions") == [{"session_id": "release-1.3"}]
+
+
+def test_two_normal_tabs_pushing_main_converge(live_koshad):
+    push = {"command": "git push origin main"}
+    code, _, _, _ = run_hook(tab(TAB_A, tool_input=push, tool_use_id="a"))
+    assert code == 0
+    code, out, err, _ = run_hook(tab(TAB_B, tool_input=push, tool_use_id="b"))
+    assert code == 2 and "target convergence" in err and "bob-f9d25337 already acted" in err
+
+
+def test_held_native_call_waits_then_runs_on_approval(live_koshad):
+    p = hook_bg(tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}), {"KOSHA_HOOK_WAIT": "15"})
+    [ap] = wait_pending(live_koshad)
+    time.sleep(0.5)
+    assert p.poll() is None                                                  # still waiting in Bob's chat
+    live_koshad.db.resolve_approval(ap["id"], "approve_once")
+    out, err = finish(p)
+    assert (p.returncode, out, err) == (0, "", "")                           # allowed: the native tool runs
+    action_id = f"bob:{TAB_A}:t1"
+    assert rows(live_koshad, "SELECT status FROM actions WHERE action_id=?", action_id) == [{"status": "reserved"}]
+    run_hook(tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}, event="PostToolUse"))
+    assert rows(live_koshad, "SELECT status FROM actions WHERE action_id=?", action_id) == [{"status": "confirmed"}]
+    assert live_koshad.db.approval(ap["id"])["status"] == "consumed"
+
+
+def test_held_native_call_denied_returns_the_note(live_koshad):
+    p = hook_bg(tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}), {"KOSHA_HOOK_WAIT": "15"})
+    [ap] = wait_pending(live_koshad)
+    live_koshad.db.resolve_approval(ap["id"], "deny", "use 755")
+    out, err = finish(p)
+    assert p.returncode == 2 and out == "" and err.startswith("KOSHA DENIED BY A HUMAN") and "use 755" in err
+
+
+def test_nobody_decides_blocks_before_the_wait_runs_out(live_koshad):
+    start = time.monotonic()
+    code, out, err, _ = run_hook(tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}), {"KOSHA_HOOK_WAIT": "1"})
+    assert code == 2 and err.startswith("KOSHA HELD FOR HUMAN APPROVAL") and time.monotonic() - start < 6
+    assert live_koshad.db.pending_approvals()                                 # still there for the human
+
+
+def test_claude_code_and_no_wait_setting_never_wait(live_koshad):
+    from tests.test_claude_hook import payload as cc_payload
+    start = time.monotonic()
+    code, _, _, _ = run_hook(cc_payload(tool_input={"command": "chmod 777 x.sh"}), {"KOSHA_HOOK_WAIT": "30"})
+    code2, _, _, _ = run_hook(tab(TAB_B, tool_input={"command": "chmod 777 y.sh"}))   # no KOSHA_HOOK_WAIT
+    assert code == code2 == 2 and time.monotonic() - start < 8
+
+
+@needs_bob
+def test_waiting_hook_through_bobs_own_runner(bob, live_koshad, tmp_path):
+    # Bob's runner with a long hook timeout: the hold waits, the human approves, Bob sees allow
+    cmd = f"KOSHA_HOOK_WAIT=20 {HOOK_BIN}"
+    hooks_cfg = {"PreToolUse": [{"matcher": NATIVE_MATCHER, "hooks": [{"type": "command", "command": cmd, "timeout": 60}]}]}
+    import threading
+
+    def human():
+        [ap] = wait_pending(live_koshad)
+        time.sleep(1.0)
+        live_koshad.db.resolve_approval(ap["id"], "approve_once")
+    threading.Thread(target=human, daemon=True).start()
+    start = time.monotonic()
+    r = bob.run_hooks(hooks_cfg, tab(TAB_A, tool_input={"command": "chmod 777 deploy.sh"}, cwd=str(tmp_path)))
+    assert r["blocked"] is False and r["warns"] == [] and time.monotonic() - start > 1.0

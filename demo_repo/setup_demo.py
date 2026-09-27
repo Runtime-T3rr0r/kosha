@@ -63,6 +63,7 @@ Rules:
 5. Never report a held, denied or unavailable step as done.
 6. kosha_review shows what is held and why. Only the human approves or denies held actions, on the Kosha approval page; never try to approve one yourself."""
 
+HOOK_WAIT = 1500   # seconds a held native Bob call waits for the human
 NATIVE_MATCHER = "^(execute_command|write_file|apply_diff|insert_content|search_and_replace|office_edit)$"
 
 
@@ -170,7 +171,13 @@ def bob_config(root: Path, work: Path, config: Path) -> None:
         "workbench.browser.enableChatTools": False,
     }, indent=2) + "\n")
 
-    hook = {"type": "command", "command": str(VENV_BIN / "kosha-hook"), "timeout": 10}
+    # Normal Bob tabs use Bob's native tools, gated here. Each tab is its own agent (its
+    # task id); KOSHA_SESSION puts them in the same fleet as the kosha-mcp modes. A held
+    # call waits up to HOOK_WAIT s for the human; Bob's hook timeout (s) must be larger,
+    # because Bob treats a timed-out hook as allow.
+    hook = {"type": "command",
+            "command": f"KOSHA_SESSION={SESSION} KOSHA_HOOK_WAIT={HOOK_WAIT} {VENV_BIN / 'kosha-hook'}",
+            "timeout": HOOK_WAIT + 300}
     hooks = {event: [{"matcher": NATIVE_MATCHER, "hooks": [hook]}]
              for event in ("PreToolUse", "PostToolUse")}
     (bob / "settings.json").write_text(json.dumps({"hooks": hooks}, indent=2) + "\n")

@@ -2,9 +2,10 @@
 
 Both harnesses send the same payload shape ({session_id, cwd, hook_event_name,
 tool_name, tool_input, tool_use_id}); the harness is told apart by tool name.
-Bob's payload carries no agent identity, so Bob's native tools are charged to one
-pooled agent, "bob-native": fleet budget and escalation see them, per-agent caps can't
-separate them. kosha-mcp calls (mcp__kosha-*) are already gated by kosha-mcp and pass.
+Bob's payload has no agent name, but session_id is the chat tab's root task id, so each
+Bob tab is charged as its own agent ("bob-<task id>") and all tabs on a workspace share one
+fleet. With KOSHA_HOOK_WAIT set, a held Bob call waits for the human instead of blocking.
+kosha-mcp calls (mcp__kosha-*) are already gated by kosha-mcp and pass.
 Bob only fires PostToolUse for tools that succeeded, so a failed native Bob call is
 never refunded (the conservative side).
 
@@ -77,7 +78,14 @@ PARAMS = {
 }
 POLICY_ONLY_FIELDS = {"approval_token"}   # never accepted from an agent, even on unknown tools
 KOSHA_MCP_PREFIX = "mcp__kosha"   # kosha-mcp tools: already priced by kosha-mcp itself
-BOB_AGENT = "bob-native"
+# Bob: every task (chat tab) has its own root task id, sent as session_id, so each tab
+# is its own agent ("bob-<first 8 of the id>") with no custom modes needed. All tabs on a
+# workspace share one fleet: KOSHA_SESSION if set, else "bob:<workspace>".
+BOB_AGENT_PREFIX = "bob-"
+# Bob only: a held call waits this long (s) for the human before blocking. Bob's hook
+# `timeout` must be larger (it fails OPEN when it fires), so this is opt-in via the
+# hook command in .bob/settings.json; 0 = don't wait (block at once, as before).
+HOOK_WAIT = float(os.environ.get("KOSHA_HOOK_WAIT", "0"))
 POST_EVENTS = {"PostToolUse": "success", "PostToolUseFailure": "failure"}
 
 _pre = True   # until the event is known, a failure blocks
@@ -129,6 +137,18 @@ def action_id_for(payload: dict, harness: str) -> str:
     return uuid.uuid4().hex
 
 
+def bob_identity(payload: dict) -> tuple[str, str]:
+    """(agent_id, fleet session) for a Bob hook call."""
+    task = str(payload.get("session_id") or "")
+    agent = BOB_AGENT_PREFIX + (task[:8] if task else "unknown")
+    fleet = os.environ.get("KOSHA_SESSION")
+    if not fleet:
+        from kosha.system import resolvers
+        cwd = str(payload.get("cwd") or "")
+        fleet = "bob:" + (resolvers.workspace_of(cwd) or cwd or "unknown")
+    return agent, fleet
+
+
 def build_action(payload: dict):
     """PreToolUse payload -> Action, or None if the tool is not kosha's to gate."""
     import shlex
@@ -159,9 +179,12 @@ def build_action(payload: dict):
         keys = ("file_path", "notebook_path") if harness == "claude_code" else ("path",)
         targets = [os.path.normpath(os.path.join(cwd, str(tool_input[k])))
                    for k in keys if tool_input.get(k)]
-    agent = str(payload.get("agent_id") or "main") if harness == "claude_code" else BOB_AGENT
+    if harness == "claude_code":
+        agent, session = str(payload.get("agent_id") or "main"), str(payload.get("session_id") or "unknown")
+    else:
+        agent, session = bob_identity(payload)
     return Action(action_id=action_id_for(payload, harness),
-                  session_id=str(payload.get("session_id") or "unknown"),
+                  session_id=session,
                   agent_id=agent, harness=harness, tool=tool, raw=tool_input, argv=argv,
                   cwd=cwd, targets=targets, ts=datetime.now(timezone.utc).isoformat())
 
@@ -172,6 +195,18 @@ def pre_tool_use(payload: dict) -> None:
         _exit(0)
     from kosha.adapters import client
     d = client.decide(action, timeout=CLIENT_TIMEOUT)
+    if (d.decision == "ask" and d.rule != "fail_closed" and action.harness == "bob"
+            and HOOK_WAIT > 0):
+        # keep the tool call waiting in Bob's chat until the human decides; the alarm moves
+        # out to cover the wait, and still fires (exit 2) before Bob's own hook timeout
+        signal.setitimer(signal.ITIMER_REAL, HOOK_WAIT + DEADLINE)
+        human = client.wait_for_human(action.action_id, HOOK_WAIT, poll=1.0)
+        if human and human["status"] == "deny":
+            _exit(2, client.denied_by_human_text(human.get("note")))
+        if human and human["status"] in ("approve_once", "approve_reset"):
+            # the same call again (same action id, so PostToolUse settles it): it matches
+            # the approval, which lets it through once
+            d = client.decide(action, timeout=CLIENT_TIMEOUT)
     if d.decision == "allow":
         _exit(0)
     _exit(2, client.block_text(d))

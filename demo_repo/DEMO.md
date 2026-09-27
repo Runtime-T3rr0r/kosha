@@ -38,6 +38,18 @@ fails, a pricing change broke a beat: don't record until it's green.
 - Open 3 tabs with **New Task in Editor**, and set the modes: `release-bump`, `test-fix`,
   `migrate-deploy`.
 
+### Two ways to run it: pick one
+
+- **Normal Bob tabs (no modes to pick):** open 3 **New Task in Editor** tabs and leave them in
+  Bob's default mode. Each tab is its own agent to Kosha automatically (shown as `bob-<task id>`
+  on the panel), all in one fleet. Agents use Bob's own shell/edit tools; Kosha gates them
+  through the hook, and a held call **waits in the chat** for your decision. In each tab's
+  **Permissions**, turn on **Read, Edit, Execute**: Kosha decides, so Bob shouldn't ask too.
+- **Named fleet modes:** set the tabs to `release-bump`, `test-fix`, `migrate-deploy`. Same
+  story, but the panel shows readable agent names, and agents use Kosha's own tools.
+
+The prompts below work in either.
+
 ## 1. Tabs 1 and 2 (send both, back to back)
 
 **Tab 1: `release-bump`**

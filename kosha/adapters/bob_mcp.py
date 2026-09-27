@@ -172,23 +172,7 @@ class Gateway:
         return False, f"unknown tool {action.tool}"
 
     def wait_for_human(self, action_id: str) -> Optional[dict]:
-        """The approval created for this held action, once a human has decided it; None if
-        nobody decided within approval_wait (koshad unreachable meanwhile counts as waiting)."""
-        deadline = time.monotonic() + self.approval_wait
-        approval_id = None
-        while time.monotonic() < deadline:
-            try:
-                if approval_id is None:
-                    approval_id = next((a["id"] for a in client.approvals()
-                                        if a["action_id"] == action_id), None)
-                if approval_id is not None:
-                    state = client.approval_status(approval_id)
-                    if state["status"] != "pending":
-                        return state
-            except Exception:
-                pass
-            time.sleep(min(self.poll, max(deadline - time.monotonic(), 0)))
-        return None
+        return client.wait_for_human(action_id, self.approval_wait, self.poll)
 
     def call(self, name: str, raw_request: dict) -> tuple[bool, str]:
         """(is_error, text). Nothing executes unless koshad said allow."""

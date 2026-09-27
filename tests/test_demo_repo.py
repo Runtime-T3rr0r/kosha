@@ -150,7 +150,12 @@ def test_hook_settings_match_bobs_strict_schema(demo):
             assert set(entry) == {"matcher", "hooks"}
             for h in entry["hooks"]:
                 assert set(h) <= {"type", "command", "timeout", "disabled"} and h["type"] == "command"
-                assert os.path.isabs(h["command"]) and os.access(h["command"], os.X_OK)
+                *env, binary = h["command"].split()
+                assert os.path.isabs(binary) and os.access(binary, os.X_OK)
+                env = dict(e.split("=", 1) for e in env)
+                assert env["KOSHA_SESSION"] == setup_demo.SESSION        # same fleet as the modes
+                # Bob treats a timed-out hook as ALLOW: its timeout must outlast our wait
+                assert h["timeout"] > int(env["KOSHA_HOOK_WAIT"]) + 60
             m = re.compile(entry["matcher"])
             assert m.search("write_file") and m.search("execute_command")
             assert not m.search(bob_tool_id("kosha-release-bump", "write_file"))   # anchored
