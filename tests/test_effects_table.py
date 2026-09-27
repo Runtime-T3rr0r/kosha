@@ -17,8 +17,9 @@ BY_ID = {e["id"]: e for e in EFFECTS}
 
 # Seed-table row -> level stated in the table, and the entry ids that implement that row.
 TABLE = [
-    ("ls, cat (non-secret), grep, find, git status/diff/log, SELECT", 0,
-     ["ls", "cat_nonsecret", "grep", "find", "git_status", "git_diff", "git_log", "sql_select"]),
+    ("ls, cat (non-secret), grep, find, git status/diff/log/show, SELECT", 0,
+     ["ls", "cat_nonsecret", "grep", "find", "git_status", "git_diff", "git_log", "git_show",
+      "sql_select"]),
     ("edit/write tracked+committed file in repo", 2, ["file_write_tracked_clean"]),
     ("edit/write untracked file in repo", 3, ["file_write_untracked"]),
     ("write outside repo/workspace", 4, ["file_write_outside_workspace"]),

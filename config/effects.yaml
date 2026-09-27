@@ -62,6 +62,13 @@
   privilege: false
   read_only: true
   note: "read-only"
+- id: git_show
+  match: {family: git, sub: show, flags_any: []}
+  reversible: true
+  scope: local
+  privilege: false
+  read_only: true
+  note: "read-only; bare `git show`, `git show <ref>`, `git show <ref> --stat` display a commit or its diffstat"
 - id: sql_select
   match: {family: sql, sub: select, flags_any: []}
   reversible: true
