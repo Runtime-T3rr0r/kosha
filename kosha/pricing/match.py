@@ -43,9 +43,10 @@ from typing import Optional
 
 import yaml
 
+from kosha.pricing.configfiles import config_file
 from kosha.pricing.rubric import classify
 
-EFFECTS = Path(__file__).resolve().parents[2] / "config" / "effects.yaml"
+EFFECTS = config_file("effects.yaml")
 
 OPERATORS = {"&&", "||", ";", "|", "&"}
 REDIRECTS = {">", ">>"}

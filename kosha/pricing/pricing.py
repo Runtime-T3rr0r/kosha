@@ -14,7 +14,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-M1_TABLE = Path(__file__).resolve().parents[2] / "config" / "price_table.m1.json"
+from kosha.pricing.configfiles import config_file
+
+M1_TABLE = config_file("price_table.m1.json")
 
 PRIV_CELL = "*|*|priv"
 UNKNOWN_CELL = "irrev|shared|nopriv"

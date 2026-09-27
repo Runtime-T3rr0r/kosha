@@ -18,11 +18,23 @@ dev = ["pytest"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-include = ["kosha*"]
+[tool.setuptools]
+# Explicit because kosha.config is not a directory under kosha/: it maps the repo-root
+# config/ (the canonical copy) into the wheel, so an installed koshad has its
+# effects table and price table without a source checkout. Add new subpackages here.
+packages = ["kosha", "kosha.adapters", "kosha.adapters.bob_extension", "kosha.api",
+            "kosha.config", "kosha.pricing", "kosha.system"]
+
+[tool.setuptools.package-dir]
+"kosha.config" = "config"
 
 [tool.setuptools.package-data]
 kosha = ["api/ui.html"]
+"kosha.config" = ["effects.yaml", "price_table.m1.json", "price_table.m2.json"]
+"kosha.adapters.bob_extension" = ["package.json", "extension.js", "core.js", "README.md"]
+
+[tool.setuptools.exclude-package-data]
+"kosha.config" = ["kosha.yaml", "*.example.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
