@@ -121,7 +121,10 @@ def _rm_rf_root(argv: list[str], cwd: str = "") -> bool:
     split flags, rm called by path (/bin/rm), `rm -rf //`, `rm -rf /.`, and a relative
     operand after `cd /` in the same command line (`cd / && rm -rf *`). cwd is the
     action's working directory; `cd DIR` segments move it, as in
-    convergence.command_targets."""
+    convergence.command_targets.
+
+    The /bin/rm bypass was found and first fixed by IBM Bob in its adversarial review
+    task (scripts/e2e_security_audit.py, bob_sessions/kosha_task05_*)."""
     for seg in _segments(argv):
         if seg[:1] == ["cd"]:
             cwd = norm_path(seg[1], cwd) if len(seg) > 1 else "~"

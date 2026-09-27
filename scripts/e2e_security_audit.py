@@ -1,5 +1,8 @@
 """Adversarial security audit for koshad.
 
+Written by IBM Bob in an adversarial review task (bob_sessions/kosha_task05_*); it
+found the /bin/rm -rf / hard-deny bypass fixed in kosha/pricing/policy.py.
+
 Spins up a throwaway koshad on its own port+database, drives it over HTTP,
 then tears it down. Reports each finding as PASS/FAIL/BUG.
 

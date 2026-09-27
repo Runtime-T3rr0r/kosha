@@ -13,7 +13,7 @@ obvious fake like `sk-fake-demo-000`.
 ## 0. Before recording (every time)
 
 ```sh
-cd ~/Repos/kosha
+cd kosha          # the repo root
 make rehearse     # must end with "== REHEARSAL OK"
 make start        # terminal 1: stops any old koshad, fresh demo world + ledger, starts koshad
                   # (asks for an approval passphrase); leave it running. Ctrl+C or `make stop` ends it.
@@ -32,7 +32,7 @@ fails, a pricing change broke a beat: don't record until it's green.
   make extension     # the Kosha panel, pop-ups and status bar
   ```
   The status bar shows `Kosha: 0 held · …` once koshad is up.
-- In Bob: open `~/Repos/kosha/.demo/work`, **trust** it, then `Ctrl+Shift+P` →
+- In Bob: open `.demo/work` (under the repo root), **trust** it, then `Ctrl+Shift+P` →
   **Developer: Reload Window**. Close any old task tabs.
 - Wait a few seconds after the reload (Kosha's tool server has to connect), then open 3 tabs
   with **New Task in Editor** and set each to the **Kosha** mode. Nothing else to configure:

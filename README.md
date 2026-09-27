@@ -2,28 +2,79 @@
 
 > **Every per-action check said yes. Together they did something nobody would approve.**
 
-Kosha (originally "Ledger") is a runtime gateway that sits beneath an AI coding harness (IBM Bob 2.0, Claude Code, OpenCode). It intercepts every tool call an agent or subagent makes and classifies it on three axes: reversibility, scope and privilege. That gives a severity level from L0 to L5. Kosha prices the action and charges it against a shared budget for the whole session: the main agent plus every subagent, "the fleet". The result is **allow**, **ask** (with a bundle view of everything the fleet has already done this window), or **deny**, always with a reason and what would be allowed instead.
+A runtime gateway that prices what a fleet of AI coding agents does together, and asks a human only when the fleet's cumulative risk warrants it. This README covers the whole project: the problem, the solution, results, how IBM Bob was used, the research behind it, how it works, how to run it, and the demo.
 
-Built for the **IBM Bob 2.0 Hackathon** (lablab.ai, Sep 25–27 2026).
+Built for the **IBM Bob 2.0 Hackathon** (lablab.ai, Sep 25–27 2026) by Roshan Singha and Prithvi Hegde.
 
-**Hosted dashboard:** TODO, not deployed yet. Run it locally, see [Dashboard](#dashboard).
+## Contents
+
+1. [Problem](#problem)
+2. [Solution](#solution)
+3. [What Kosha is, and is not](#what-kosha-is-and-is-not)
+4. [Hackathon submission](#hackathon-submission)
+5. [Results](#results)
+6. [IBM Bob 2.0](#ibm-bob-20)
+7. [Research foundations](#research-foundations)
+8. [Quickstart](#quickstart)
+9. [The demo: prepare release 1.3](#the-demo-prepare-release-13)
+10. [How it works](#how-it-works): [figures](#figures-first) · [architecture](#architecture-overview) · [defence layers](#the-four-defence-layers) · [components](#component-deep-dives) · [pricing](#the-pricing-model) · [policy](#policy-rules) · [identity](#identity-and-fleet-isolation) · [approvals](#the-approval-flow) · [fs_guard](#the-fs_guard-layer-3)
+11. [Configuration](#configuration) · [Running Kosha](#running-kosha) · [Tests](#test-coverage)
+12. [Known limitations](#known-limitations-v1)
+13. [Security](#security)
+14. [Repo layout](#repo-layout)
+15. [License and credits](#license-and-credits)
 
 ---
 
-## The problem
+## Problem
 
-Today's gates judge one action at a time. A denylist (`rm -rf`, `git push --force`) or a per-action severity check approves or blocks each tool call on its own. A fleet of agents can collectively do something no human would sign off on as a bundle, even when every individual action looked fine alone. For example, one agent edits a migration, another runs it against the shared database, and a third pushes and deploys.
+IBM Bob runs release and deployment work as a fleet: one agent bumps a version, another edits CI, a third runs a migration and deploys. Bob's safety controls judge each of those tool calls alone. That leaves exactly two options today — approve every call manually, which is slow and defeats the point of running agents in parallel, or auto-approve execution, which is fast but blind to what the fleet does as a whole. Nothing sees the bundle.
 
-The choice today is between two bad defaults:
+This isn't a hypothetical gap:
 
-- **Manually approve everything:** safe, slow, and it defeats the point of parallel subagents.
-- **Auto-approve everything:** fast and risky.
+- **Per-action limits collapse at fleet scale.** Agents individually capped under a shared budget still overdrew it 2.4× at 50 agents, 9.7× at 200, 48× at 1,000 — only a cumulative ledger held every run inside the limit [1].
+- **Agents don't self-limit.** Across 2,208 real DevOps prompts, 55.8–67.8% of acting runs crossed an action boundary anyway, and telling the agent the blast radius was high barely moved that number (65.5% vs 64.0%) [3].
+- **The failures that reach production are severe.** Of 16,586 real coding-agent GitHub issues, 547 were confirmed safety failures — 326 high or critical, including destructive operations and authorization bypasses [4].
+- **Binary pass/fail hides exactly this.** A defense that reported 0% attack success still leaked cross-scope once; judges that see individual actions score a full escalation chain the same as one harmless step [2].
 
-Kosha lets auto-approve stay on and only interrupts when the **cumulative** risk of the fleet warrants it. It keeps a ledger per session: every action's price, which agent spent it, and which consequential actions are already in the window. When it asks, the human sees the whole bundle, not one command out of context.
+## Solution
+
+Kosha is a runtime gateway that sits beneath Bob and prices what its fleet actually does, together. Every tool call is classified by reversibility, scope and privilege [2] into a level (L0–L5) and a price, charged against one budget shared by every agent and subagent in the session. Bob keeps auto-approve on. Kosha decides allow, ask — showing a human everything the fleet already did this window — or deny, with a reason and what would be allowed instead. No model makes that call; it's deterministic code, covered by 981 tests.
+
+The impact, measured, not claimed:
+
+- **We cut our own false-alarm rate by ~92% through calibration.** Early coverage gaps in the effects table meant unmatched commands defaulted conservatively and triggered escalation — 95.2 false asks per 100 benign sessions. Closing those gaps against real SWE-smith and StepShield data brought that to 7.64 per 100, without loosening the rule itself.
+- **~25× fewer interruptions than a per-action gate.** At run time, Kosha asks 0.63 times per 100 benign sessions; a gate checking each action alone at L4+ asks 15.53 times per 100, for a lower single-agent catch rate (29.2% vs 58.9%) — the trade Kosha is designed to make.
+- **It catches what no per-action check can see, ever.** Across 1,800 composed fleets where no single agent's action would trip any existing gate alone, Kosha asks 100% of the time. Denylist and per-action baselines: 0%.
+- **Tuned to real work, not guessed.** The per-agent cap (375) sits at the 95th percentile of 26,076 real benign sessions.
+
+Stated honestly: Kosha also asks on 100% of all-clean composed fleets — it guarantees review after enough consequential work accumulates, it doesn't infer intent. It's a guardrail for well-meaning agents, not an adversary sandbox.
+
+**References:** [1] Irreversibility Budget, arXiv:2609.00275 · [2] Action-Graded Severity Scale, arXiv:2607.07474 · [3] UnderSpecBench, arXiv:2607.02294 · [4] What Breaks When LLMs Code?, arXiv:2605.30777
+
+---
+
+## What Kosha is, and is not
+
+Kosha is a runtime gateway that sits beneath an AI coding harness (IBM Bob 2.0, Claude Code, OpenCode). It intercepts every tool call an agent or subagent makes and classifies it on three axes: reversibility, scope and privilege. That gives a severity level from L0 to L5. Kosha prices the action and charges it against a shared budget for the whole session: the main agent plus every subagent, "the fleet". The result is **allow**, **ask** (with a bundle view of everything the fleet has already done this window), or **deny**, always with a reason and what would be allowed instead.
 
 > **Kosha is a guardrail for well-meaning agents, not a security sandbox.** It is built to catch agents that are trying to do the right thing and drift into doing too much. It does not defend against an adversary actively trying to evade detection. Command classification reads argv, and an obfuscated command (`python -c "…"`, a script with an innocent name) can be priced lower than what it does. The self-approval guards are pattern-based, and the ledger runs as the same OS user as the agents. Read every number below with this in mind: the benchmarks measure whether the accounting interrupts at the right *amount* of fleet activity, not whether it can tell a malicious fleet from a benign one.
 
 Decisions are deterministic accounting. No model call ever decides allow, ask or deny.
+
+---
+
+## Hackathon submission
+
+| Deliverable | Where |
+|---|---|
+| Problem & Solution Statement | [Problem](#problem) · [Solution](#solution) |
+| IBM Bob Usage Statement | [IBM Bob 2.0](#ibm-bob-20) |
+| Bob task session screenshots, both team members | [bob_sessions/](bob_sessions/), indexed in [the screenshot table](#bob-task-session-screenshots) |
+| Code Bob assisted with | [Bob as a build and test tool](#2-bob-as-a-build-and-test-tool) |
+| Demo video (MP4, ≤3 min) | TODO: link |
+| Public repository | https://github.com/Penitant/kosha |
+| License | [MIT](LICENSE) · [third-party notices](THIRD_PARTY_NOTICES.md) · [security](SECURITY.md) |
 
 ---
 
@@ -68,22 +119,70 @@ Bench D (git history, SZZ proxy) and Bench E (engineered target convergence) are
 
 ## IBM Bob 2.0
 
-Bob is both the harness Kosha gates and a tool the team used to build it.
+Bob is **the harness Kosha governs** and **a tool we used to build, test and document Kosha**. Screenshots from both team members are [indexed below](#bob-task-session-screenshots).
 
-**Kosha running under Bob:**
-- `kosha-mcp` is an MCP server registered in Bob. A `kosha` custom mode gets Kosha's gated tools (`run_command`, `edit_file`, `write_file`, `git`, `db_exec`, `deploy`) and no native edit or execute tools.
-- `kosha-hook` runs as Bob's PreToolUse/PostToolUse hook on Bob's native tools. Each Bob chat tab is its own agent (`bob-<task id>`), and all tabs on a workspace share one fleet. Held calls wait for the human.
-- A Bob extension (`kosha/adapters/bob_extension/`) opens the approval page inside Bob whenever an action is held, with a status-bar count.
-- `make bob-install` adds a global Bob hook that stamps each tab's identity onto Kosha's own tool calls.
+### 1. Bob as the governed fleet (the product)
 
-**Bob used to build Kosha:**
-- An adversarial review task: Bob tried to break the gate and wrote `scripts/e2e_security_audit.py`. It found that `/bin/rm -rf /` (rm called by path) bypassed hard-deny, and fixed it in `kosha/pricing/policy.py`. The follow-up variants (`rm -rf //`, `rm -rf /.`, `cd / && rm -rf *`) are now hard-denied too, with tests in `tests/test_policy.py`.
-- The first draft of this README's architecture and figures sections.
-- A benchmarks page built with parallel Bob subagents, since replaced by the `bench/web/` dashboard.
-- TODO: add the teammate's Bob tasks (for example the Bob adapters) once confirmed from their Bob session history.
+Kosha is built around Bob's own extension points:
 
-**Bob session screenshots:** TODO, `bob_sessions/` is not in the repo yet.
-**Demo video:** TODO, not recorded yet.
+| Bob feature | How Kosha uses it | Code |
+|---|---|---|
+| **MCP servers** | `kosha-mcp` exposes gated `run_command`, `edit_file`, `write_file`, `git`, `db_exec`, `deploy`, and runs a call only after koshad allows it | `kosha/adapters/bob_mcp.py` |
+| **Custom modes** | A **Kosha** mode with `read`, `todo` and `mcp` only, so Bob itself stops it from calling native edit or execute tools | `kosha/adapters/install.py` |
+| **Hooks** | A PreToolUse/PostToolUse hook gates Bob's native tools. A global hook stamps each tab's identity onto Kosha's calls | `kosha/adapters/claude_hook.py`, `bob_install.py` |
+| **Parallel tasks / subagents** | Each Bob chat tab is its own agent (`bob-<task id>`), and all tabs on a workspace share one fleet budget | `kosha/system/kosha_db.py` |
+| **Auto-approve** | Stays **on** for Kosha's tools. Kosha decides, so the human is interrupted only when the fleet's cumulative risk warrants it | `kosha-install` |
+| **Extensions** | A status-bar count (`held · fleet spent/budget`) that opens the approval page inside Bob | `kosha/adapters/bob_extension/` |
+
+We read Bob's hook runner source to find its exact semantics. Only exit code 2 blocks, other failures allow, and "ask" is treated as allow. Every Kosha failure path therefore ends in exit 2, and `tests/test_bob_hook.py` runs the hook under Bob's real hook runner.
+
+The demo, "prepare release 1.3", is three Bob tabs working concurrently under one budget (task01–04).
+
+### 2. Bob as a build and test tool
+
+| Task | What Bob produced | Where it lives |
+|---|---|---|
+| **Adversarial bug probe** (task05) | Bob attacked koshad over HTTP (fingerprint reuse, parser fuzzing, self-approval, passphrase gate) and wrote the audit script and a findings report. It **found a real bypass**: `/bin/rm -rf /` escaped the hard-deny. Bob fixed it, and the variants (`//`, `/.`, `cd / && rm -rf *`) are now hard-denied too. | `scripts/e2e_security_audit.py` (39 pass), fix in `kosha/pricing/policy.py`, tests in `tests/test_policy.py` |
+| **Dashboard** (task06) | Bob built the first benchmarks dashboard prototype with **parallel subagents** working at the same time. We then rebuilt and extended it as the React/Vite dashboard (live session, approval queue, benchmarks). | `bench/web/` |
+| **Documentation** (task07) | A first draft of the README's architecture diagrams, figures and component deep-dives, which we then corrected against the code | `README.md` (Figures 1–5, deep-dives) |
+| **Demo testing** (task01–04) | Live runs that exposed real issues. Agents rationed free reads to save budget, so reads are now free and agents are told so. A held call now stays open until the human decides, so Bob's chat waits and resumes on approval. | `demo_repo/`, `kosha/adapters/bob_mcp.py` |
+
+**Not used for:** allow/ask/deny decisions. By design no model, Bob included, decides anything at runtime.
+
+**Budget:** Bobcoins went where Bob's features mattered most: the adversarial probe (6.55), parallel subagents (5.16), document drafting (2.03), and many short governed demo tasks (0.02–0.57 each).
+
+### Bob task session screenshots
+
+From both team members, in [`bob_sessions/`](bob_sessions/). File names follow `teamname_taskNN_shortdescription_summary.png`.
+
+| File | Team member | What the Bob task did | Bobcoins |
+|---|---|---|---|
+| [`kosha_task01_three_tab_fleet_summary.png`](bob_sessions/kosha_task01_three_tab_fleet_summary.png) | Roshan Singha | Three Bob tabs (`release-bump`, `test-fix`, `migrate-deploy`) running concurrently as one Kosha fleet. They all share one budget, and two agents decline to burn it on pointless repeated calls. | 0.039 / 0.098 / 0.019 |
+| [`kosha_task02_release13_under_kosha_summary.png`](bob_sessions/kosha_task02_release13_under_kosha_summary.png) | Roshan Singha | Demo task "Prepare release 1.3" (VERSION bump, CHANGELOG, commit, push) running in the Kosha mode, with the Kosha approvals panel and status bar (`fleet 176/750`) open inside Bob | 0.438 |
+| [`kosha_task03_flaky_test_fix_summary.png`](bob_sessions/kosha_task03_flaky_test_fix_summary.png) | Roshan Singha | Demo task: fix a flaky timing test and slim CI, gated by Kosha, with tests re-run through Kosha's tools (a follow-up in the task02 tab) | incl. in 0.438 |
+| [`kosha_task04_governed_task_history_summary.png`](bob_sessions/kosha_task04_governed_task_history_summary.png) | Roshan Singha | Bob's task list: 39 governed demo and rehearsal tasks run under Kosha in one day | 0.04–0.57 each |
+| [`kosha_task05_bug_probe_report_summary.png`](bob_sessions/kosha_task05_bug_probe_report_summary.png) | Prithvi Hegde | Adversarial bug probe of koshad: wrote `scripts/e2e_security_audit.py` and a findings report, found the `/bin/rm -rf /` hard-deny bypass | 6.55 |
+| [`kosha_task06_dashboard_summary.png`](bob_sessions/kosha_task06_dashboard_summary.png) | Prithvi Hegde | Benchmarks dashboard prototype built with parallel Bob subagents | 5.16 |
+| [`kosha_task07_readme_architecture_summary.png`](bob_sessions/kosha_task07_readme_architecture_summary.png) | Prithvi Hegde | First draft of the README's architecture diagrams and figures | 2.03 |
+
+---
+
+## Research foundations
+
+Kosha puts published research into practice. It doesn't invent new theory. What we took from each source:
+
+| Source | What Kosha takes from it |
+|---|---|
+| **The Irreversibility Budget** ([arXiv:2609.00275](https://arxiv.org/abs/2609.00275), [code](https://github.com/mpi-dsg/irreversibility-budget)) | The core claim: per-action caps overdraw a fleet budget 2.4× at 50 agents and 48× at 1,000, while a cumulative ledger doesn't. Kosha's reserve → confirm → refund lifecycle and "unknown = expensive" come from here. It names dependency-aware pricing as the open problem. |
+| **Action-Graded Severity Scale** ([arXiv:2607.07474](https://arxiv.org/abs/2607.07474), [code](https://github.com/Harry-Ashley/action-graded-severity)) | The three effect axes (reversibility, scope, privilege), the L0–L5 levels and the gate order. `kosha/pricing/rubric.py` is ported from its oracle (MIT). It found that LLM judges miss escalation chains, which is why escalation here is deterministic code. |
+| **StepShield** ([arXiv:2601.22136](https://arxiv.org/abs/2601.22136), [data](https://github.com/glo26/stepshield)) | Bench A and the trajectories behind Bench B. It shows that static rule guards have high recall but poor timing. |
+| **UnderSpecBench**, "Coding Agents Are Guessing" ([arXiv:2607.02294](https://arxiv.org/abs/2607.02294)) | Evidence that agents don't limit themselves: 56–68% of acting runs cross an action boundary, whatever the blast-radius cue. |
+| **What Breaks When LLMs Code?** ([arXiv:2605.30777](https://arxiv.org/abs/2605.30777)) | Incident evidence: 547 confirmed coding-agent safety failures, 60% of them high or critical, and 24.5% destructive operations. |
+| **ToolSafe** ([arXiv:2601.10156](https://arxiv.org/abs/2601.10156)), **AgentSpec** ([code](https://github.com/haoyuwang99/AgentSpec)) | Design rule 3: every ask or deny returns a reason and what *would* be allowed, so the agent can re-plan. |
+| **Agent Control Protocol** ([arXiv:2603.18829](https://arxiv.org/abs/2603.18829)) | Closest prior art: stateful admission per agent. Kosha differs by pricing harm and aggregating across the whole fleet. |
+| **SWE-smith trajectories** ([dataset](https://huggingface.co/datasets/SWE-bench/SWE-smith-trajectories)) | Bench C, 26,076 benign runs, which set `agent_cap` so normal work is rarely interrupted |
+
+**What's new here:** as far as we know, Kosha is the first runtime gateway for coding-agent fleets that prices each action by reversibility, scope and privilege. It enforces one cumulative budget across every agent in a session, and detects cross-agent escalation deterministically. We benchmark it against per-action gates.
 
 ---
 
@@ -128,6 +227,29 @@ Use `--no-extension` for a headless configuration run. Reload Bob, trust the wor
 
 The installer auto-approves Kosha's MCP tools inside that mode, because Kosha makes the policy decision. The extension is a read-only monitor. It shows `Kosha: <held> held · fleet <spent>/<budget>` in Bob's status bar, opens the approval page on new holds, and offers a Review button. Human approval still happens only in koshad's page with the terminal-supplied passphrase; the extension never receives it.
 
+### The Kosha extension for Bob
+
+Opens Kosha's approval panel inside Bob the moment an agent's action is held.
+
+- **Status bar:** `Kosha: 2 held · fleet 70/750`. Click it to open the panel.
+- **On every new hold:** the panel opens beside your editor (without taking focus), plus a
+  notification naming the agent, the command and the rule, with a **Review** button.
+- **The panel** is koshad's own approval page (`/ui`): unlock with the approval passphrase you
+  gave koshad at start-up, then **Approve once / Approve & reset window / Deny**.
+
+The extension only reads from koshad (`/stream`, `/approvals`, `/sessions`). It can't approve
+anything itself, and the passphrase never passes through it. Holds that happened before Bob
+started are counted in the status bar but never pop up.
+
+Settings: `kosha.koshadUrl` (default `http://127.0.0.1:8765`) and `kosha.autoOpen` (default on).
+
+Build and install:
+
+```sh
+python kosha/adapters/bob_extension/build_vsix.py      # -> dist/kosha-bob-0.1.0.vsix
+bob --install-extension dist/kosha-bob-0.1.0.vsix
+```
+
 ### Docker
 
 `docker compose up --build` packages koshad, its price table and UI, with the SQLite ledger in the `kosha-data` volume. The port is bound to `127.0.0.1`, and the passphrase is asked on the attached terminal. `make package` builds the image.
@@ -145,24 +267,153 @@ npm run dev        # http://localhost:5173  (#live, #queue, #bench)
 
 The live approval page served by koshad itself is `http://127.0.0.1:8765/ui`.
 
+`export_fixtures.py` copies the committed bench summaries, the M1 price table and
+effects.yaml, and rebuilds four Bench B composed fleets with `bench/compose_fleet.py`'s
+own seeds so every step carries its full `policy.decide` Decision. It aborts if a
+rebuilt fleet's members or first flag differ from `bench/results/compose_fleet.json`.
+Approval buttons record resolutions in the browser only; no koshad is attached.
+
 ---
 
-## Table of Contents
+## The demo: prepare release 1.3
 
-1. [Figures first](#figures-first)
-2. [Architecture overview](#architecture-overview)
-3. [The four defence layers](#the-four-defence-layers)
-4. [Component deep-dives](#component-deep-dives)
-5. [The pricing model](#the-pricing-model)
-6. [Policy rules](#policy-rules)
-7. [Identity and fleet isolation](#identity-and-fleet-isolation)
-8. [The approval flow](#the-approval-flow)
-9. [The fs_guard (layer 3)](#the-fs_guard-layer-3)
-10. [Configuration](#configuration)
-11. [Running Kosha](#running-kosha)
-12. [Test coverage](#test-coverage)
-13. [Known limitations](#known-limitations-v1)
-14. [Repo layout](#repo-layout)
+Three concurrent Bob tabs, each automatically its own agent to Kosha, prepare
+release 1.3 of a small service. Every step is individually reasonable. Together they are an
+unreviewed CI change, pushed to main, followed by a production migration. Kosha holds the
+colliding push and the prod migration, shows the human the whole bundle, and lets the release
+finish once a human approves.
+
+Say "three concurrent tasks" or "three agents". **Never "subagents"**: this is not Bob's
+subagent feature. No secrets appear anywhere in this demo. If you improvise one, use an
+obvious fake like `sk-fake-demo-000`.
+
+### 0. Before recording (every time)
+
+```sh
+cd kosha          # the repo root
+make rehearse     # must end with "== REHEARSAL OK"
+make start        # terminal 1: stops any old koshad, fresh demo world + ledger, starts koshad
+                  # (asks for an approval passphrase); leave it running. Ctrl+C or `make stop` ends it.
+```
+`make help` lists the rest (`stop`, `reset`, `status`, `extension`, `test`).
+
+koshad asks for an **approval passphrase** on its own terminal and keeps it only in memory.
+Approving needs it; the agents can't read it from anywhere, so they can't approve themselves.
+
+`rehearse.py` plays this exact story against current pricing in a throwaway world. If it
+fails, a pricing change broke a beat: don't record until it's green.
+
+- One-time (already done on this machine), then **Developer: Reload Window**:
+  ```sh
+  make bob-install   # Bob global: stamps each tab's identity on Kosha's tools; auto-approves them
+  make extension     # the Kosha panel, pop-ups and status bar
+  ```
+  The status bar shows `Kosha: 0 held · …` once koshad is up.
+- In Bob: open `.demo/work` (under the repo root), **trust** it, then `Ctrl+Shift+P` →
+  **Developer: Reload Window**. Close any old task tabs.
+- Wait a few seconds after the reload (Kosha's tool server has to connect), then open 3 tabs
+  with **New Task in Editor** and set each to the **Kosha** mode. Nothing else to configure:
+  in this mode every step goes through Kosha's own tools, which Bob never asks about, so
+  **Kosha alone decides**. Each tab is its own agent to Kosha automatically (the panel shows
+  them as `bob-<task id>`); they share one fleet. Below, "the release tab", "the test tab" and "the migrate tab" are just tabs 1-3.
+
+### 1. Tabs 1 and 2 (send both, back to back)
+
+**Tab 1 (the release tab)**
+```
+Prepare release 1.3: change VERSION from 1.2.0 to 1.3.0, add a "## 1.3.0" section to CHANGELOG.md with the line "- users get an email column", commit everything with the message "release 1.3.0", and push to origin main.
+```
+
+**Tab 2 (the test tab)**
+```
+tests/test_app.py::test_health_is_fast is flaky: its timing bound (< 0.00001 seconds) is impossible. Relax it to < 1.0, run the tests, and make CI faster by removing the "slow integration check" step from .github/workflows/ci.yml. Then push to origin main.
+```
+
+**Expect:** the edits, the test run and the commit are allowed. The CI edit is allowed (L4:
+shared CI config, but plausible on its own). The first push to `main` is allowed. The
+**second** push to `main`, from whichever agent gets there second, is **held (target
+convergence)**: its tool call stays open in that tab, waiting, and the Kosha panel opens with it.
+
+*Narration:* "Two agents, two reasonable jobs, running at the same time. Each step on its own
+is fine: a version bump, a flaky-test fix, a CI speed-up, a push. But both agents just tried
+to push main, and Kosha held the second one: two agents on the same branch in one window."
+
+### 2. Tab 3 (send once tab 1 has finished and tab 2 is waiting on its push)
+
+**Tab 3 (the migrate tab)**
+```
+Release 1.3 is ready. Check how many users prod has, then apply the pending migration to prod with `python3 manage.py migrate --db prod`, then deploy to prod with your deploy tool.
+```
+
+**Expect:** the prod read is free. The migration is **held (fleet escalation)**: its call
+stays open in tab 3, waiting, and a second card appears on the Kosha panel.
+
+*Narration:* "A prod migration is a normal release step. But this window already has an
+unreviewed change that removed a CI check, and a push to main. Per-action approval would say
+yes to each of these. Kosha looks at what the fleet did together, and holds it."
+
+### 3. The human reviews and approves, on the Kosha approval panel (inside Bob)
+
+**Nothing to open:** the moment an action is held, the Kosha extension opens the **Kosha
+approvals** panel beside the editor (without taking focus), shows a notification ("Kosha held
+bob-…: git push origin main (convergence)", **Review**), and the status bar turns amber
+(`Kosha: 2 held · fleet …`). The first time, type the passphrase and click **Unlock**; the
+panel stays unlocked while it's open, and it's kept in the panel's memory only. You can also
+open it any time from the status bar or `Ctrl+Shift+P` → **Kosha: Open Approvals**.
+
+The page shows both held actions live: what's held, **why** (the rule and Kosha's reason), the
+fleet's spend, and the **bundle** (everything the fleet did this window, in order). The
+migration's bundle shows the CI step removed, the commit, the push to main, then the held
+migration. Agents can show the same list in chat: "Show me what Kosha is holding"
+(`kosha_review`, read-only). Only the page can approve.
+
+- On the **test tab's push** (the second one to `main`): type the note `main was already pushed`, click **Deny**.
+- On the **prod migration**: click **Approve & reset window**.
+
+The line under the passphrase box confirms each decision and says which agent to tell to retry.
+
+*Narration:* "The human sees the whole bundle, not one command in isolation. The duplicate
+push gets denied. The migration gets approved, and the window resets. Only the human can do
+this: approving needs a passphrase the agents never see."
+
+**Fallback (terminal 2), if the page misbehaves:**
+```sh
+curl -s localhost:8765/approvals | python3 demo_repo/show_bundle.py
+read -rs KOSHA_PASS    # the approval passphrase; silent, not in shell history
+curl -s -X POST localhost:8765/approvals/1 -H 'content-type: application/json' -H "X-Kosha-Approval: $KOSHA_PASS" -d '{"decision":"deny","note":"main was already pushed"}'
+curl -s -X POST localhost:8765/approvals/2 -H 'content-type: application/json' -H "X-Kosha-Approval: $KOSHA_PASS" -d '{"decision":"approve_reset"}'
+```
+
+### 4. The release finishes by itself
+
+Nothing to type. Held calls **wait in the agents' chats** (Bob shows the tool still running)
+until the human decides:
+- The **test tab**'s push returns `KOSHA DENIED BY A HUMAN` with the note "main was already pushed",
+  and the agent reports it instead of retrying.
+- The **migrate tab**'s migration **runs as soon as it's approved**, and the agent carries on to
+  the deploy by itself: `deployed v1.3.0 to prod (stub)`. Release 1.3 is out.
+
+*Narration:* "The agents never stopped. They waited in place while a human looked at the bundle,
+then carried on, or were told why not."
+
+If nobody decides within 25 minutes, the call gives up and returns `KOSHA HELD FOR HUMAN
+APPROVAL`; then approve on the panel and tell the agent to retry the same call.
+
+### If something goes off-script
+
+- **An agent refuses or improvises:** the rehearsal (`python demo_repo/rehearse.py`) is the
+  same story, deterministic, against a real koshad. Run it on camera as the fallback.
+- **An agent keeps retrying a held call:** Bob's own loop guard warns at 3 identical calls and
+  stops the task at 5. Tell the agent to wait for approval.
+- **The collision must be the same form for both agents:** both `git push` the same branch
+  (as scripted), or both use file tools on the same file. A file tool and a shell command
+  on the same file don't converge yet (pending teammate fix in `convergence.targets_of`).
+- Nothing in this demo runs longer than about 1s (`deploy.sh` is the longest). If you add an
+  fs_guard beat, stage it when no Kosha command is running.
+
+---
+
+## How it works
 
 The design follows an **x → y → z chain** throughout. Every subsystem takes a raw, untrusted input, turns it into a normalized form, and produces a deterministic, audited outcome.
 
@@ -876,7 +1127,7 @@ Concurrency is mutation-tested: swapping `BEGIN IMMEDIATE` for `BEGIN` fails the
 
 These are documented gaps, not surprises:
 
-1. **Not a sandbox.** Kosha is a guardrail for well-meaning agents (see [The problem](#the-problem)). Classification reads argv; an obfuscated or opaque command can be priced lower than what it does. Opaque scripts (`python x.py`) are priced by a flat fallback, not scanned.
+1. **Not a sandbox.** Kosha is a guardrail for well-meaning agents (see [What Kosha is, and is not](#what-kosha-is-and-is-not)). Classification reads argv; an obfuscated or opaque command can be priced lower than what it does. Opaque scripts (`python x.py`) are priced by a flat fallback, not scanned.
 
 2. **Command leases cover cwd.** While a gated command runs, a native write anywhere under its working directory is accepted as that command's own. Layers 1 and 2 prevent native writes in the demo fleet.
 
@@ -887,6 +1138,18 @@ These are documented gaps, not surprises:
 5. **`raw` is stored in plain text.** Approval bundles and the actions table store full tool input (SQL, file contents, commands). This is intentional: a human needs to see the content to decide on an approval. Reset `kosha.db` before recording any demo that involves sensitive inputs.
 
 6. **Calibration is pending.** M1 prices are hand-set, `n` and `p_high` are empty, and `fleet_budget` is a single-agent proxy (2 × `agent_cap`). M2 (`config/price_table.m2.json`) doesn't exist yet.
+
+---
+
+## Security
+
+- Secrets live only in `.env` and `config/kosha.yaml`, both gitignored. Templates: `.env.example`, `config/kosha.example.yaml`.
+- The `prod` database alias must point at a **disposable** database.
+- The approval passphrase is typed on koshad's terminal at startup and kept only in memory. It is never read from an env var or file.
+- `kosha.db` stores raw tool inputs in plain text. Reset it before recording a demo.
+- Kosha is a guardrail for well-meaning agents, **not a security sandbox**. Don't rely on it to contain a hostile agent.
+
+Security and credential handling follows the IBM hackathon template: [SECURITY.md](SECURITY.md), `.gitignore`, `.bobignore`, `.env.example`. Before every commit: review `git diff`, keep `.env` unstaged, and never paste credentials into Bob or any other assistant.
 
 ---
 
@@ -931,9 +1194,21 @@ bench/                 Offline benchmarks (no model calls)
   results/             Committed outputs of the above
   web/                 Dashboard (React/Vite): live session, approval queue, benchmarks
 
-calib/                 M2 calibration (pending)
 demo_repo/             FastAPI+SQLite demo app and the scripted release-1.3 demo
 Dockerfile, compose.yaml  koshad container (see Docker above)
 scripts/               test_installer.sh (isolated installer check), e2e_security_audit.py
 tests/                 981 tests
+bob_sessions/          Bob task session screenshots from both team members
+LICENSE, THIRD_PARTY_NOTICES.md, SECURITY.md, .bobignore, .env.example
 ```
+
+---
+
+## License and credits
+
+[MIT](LICENSE), © 2026 Roshan Singha and Prithvi Hegde.
+
+- `kosha/pricing/rubric.py` is ported from [action-graded-severity](https://github.com/Harry-Ashley/action-graded-severity) (MIT, © 2026 Harry Owiredu-Ashley). The notice is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- The benchmarks read [StepShield](https://github.com/glo26/stepshield) (MIT) and [SWE-smith trajectories](https://huggingface.co/datasets/SWE-bench/SWE-smith-trajectories) (MIT). The data is downloaded, not redistributed; only the derived results in `bench/results/` are committed.
+- Parts of the code, tests, dashboard and docs were built or tested with IBM Bob. See [IBM Bob 2.0](#ibm-bob-20).
+- Security and credential handling follows the IBM hackathon template: [SECURITY.md](SECURITY.md), `.gitignore`, `.bobignore`, `.env.example`.
