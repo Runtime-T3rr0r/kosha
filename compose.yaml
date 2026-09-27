@@ -1,0 +1,16 @@
+services:
+  koshad:
+    build: .
+    image: kosha:local
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - kosha-data:/data
+      # Uncomment to enable configured database aliases in the daemon:
+      # - ./config/kosha.yaml:/app/config/kosha.yaml:ro
+    environment:
+      KOSHA_CONFIG: /app/config/kosha.yaml
+    stdin_open: true
+    tty: true
+volumes:
+  kosha-data:

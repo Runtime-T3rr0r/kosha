@@ -9,6 +9,7 @@ dependencies = ["pyyaml", "fastapi", "uvicorn", "requests", "watchdog", "bashlex
 koshad = "kosha.api.server:main"
 kosha-mcp = "kosha.adapters.bob_mcp:main"
 kosha-hook = "kosha.adapters.claude_hook:main"
+kosha-install = "kosha.adapters.install:main"
 
 [project.optional-dependencies]
 dev = ["pytest"]

@@ -3,7 +3,7 @@ PY    := .venv/bin/python
 PORT  ?= 8765
 .DEFAULT_GOAL := help
 
-.PHONY: help start start-keep stop reset status rehearse test extension bob-install bob-uninstall
+.PHONY: help start start-keep stop reset status rehearse test extension bob-install bob-uninstall install package test-installer
 
 help:  ## list the commands
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-11s %s\n", $$1, $$2}'
@@ -45,6 +45,15 @@ test:  ## run the full test suite
 extension:  ## build the Kosha extension and install it into Bob (then Reload Window)
 	@$(PY) kosha/adapters/bob_extension/build_vsix.py
 	@bob --install-extension dist/kosha-bob-$$($(PY) -c "import json;print(json.load(open('kosha/adapters/bob_extension/package.json'))['version'])").vsix
+
+install:  ## install Bob hook, extension, MCP server and Kosha mode for this workspace
+	@$(PY) -m kosha.adapters.install --workspace "$(CURDIR)"
+
+package:  ## build the deployable Docker image (run `docker compose up` afterwards)
+	@docker build -t kosha:local .
+
+test-installer:  ## run the complete Bob installer against an isolated fake home and workspace
+	@PYTHON="$(PY)" sh scripts/test_installer.sh
 
 bob-install:  ## one-time: Bob global hook for per-tab identity on Kosha's tools + auto-approve them (backed up)
 	@$(PY) -m kosha.adapters.bob_install install

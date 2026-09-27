@@ -221,7 +221,8 @@ def main() -> None:
             super().handle_exit(sig, frame)
 
     try:
-        Server(uvicorn.Config(app, host="127.0.0.1", port=int(os.environ.get("KOSHAD_PORT", 8765)),
+        Server(uvicorn.Config(app, host=os.environ.get("KOSHAD_HOST", "127.0.0.1"),
+                              port=int(os.environ.get("KOSHAD_PORT", 8765)),
                               timeout_graceful_shutdown=2)).run()
     except KeyboardInterrupt:          # uvicorn re-raises the Ctrl+C after a clean shutdown
         pass

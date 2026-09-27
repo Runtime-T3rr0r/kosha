@@ -9,6 +9,7 @@ unknown (irrev|shared|nopriv).
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -20,7 +21,13 @@ UNKNOWN_CELL = "irrev|shared|nopriv"
 
 
 @lru_cache(maxsize=None)
-def load_table(path: Path = M1_TABLE) -> dict:
+def load_table(path: Optional[Path] = None) -> dict:
+    """Load the M1 table, optionally from ``KOSHA_PRICE_TABLE``.
+
+    The override lets a packaged daemon keep its policy beside its mounted runtime
+    configuration instead of assuming a source checkout exists on disk.
+    """
+    path = path or Path(os.environ.get("KOSHA_PRICE_TABLE") or M1_TABLE)
     return json.loads(Path(path).read_text())
 
 

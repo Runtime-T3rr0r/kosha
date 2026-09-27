@@ -1,0 +1,13 @@
+.git
+.claude
+.venv
+.demo
+docs
+dist
+__pycache__
+*.pyc
+*.db
+*.sqlite
+.env
+config/kosha.yaml
+node_modules
