@@ -149,8 +149,6 @@ The demo, "prepare release 1.3", is three Bob tabs working concurrently under on
 
 **Not used for:** allow/ask/deny decisions. By design no model, Bob included, decides anything at runtime.
 
-**Budget:** Bobcoins went where Bob's features mattered most: the adversarial probe (6.55), parallel subagents (5.16), document drafting (2.03), and many short governed demo tasks (0.02–0.57 each).
-
 ### Bob task session screenshots
 
 From both team members, in [`bob_sessions/`](bob_sessions/). File names follow `teamname_taskNN_shortdescription_summary.png`.

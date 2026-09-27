@@ -25,7 +25,9 @@ Approving needs it; the agents can't read it from anywhere, so they can't approv
 
 `rehearse.py` plays this exact story against current pricing in a throwaway world. If it
 fails, a pricing change broke a beat: don't record until it's green.
-
+kill $(ss -ltnp | grep ':8765 ' | grep -o 'pid=[0-9]*' | cut -d= -f2); while ss -ltn | grep -q ':8765 '; do sleep 0.5; done
+.venv/bin/python demo_repo/setup_demo.py
+.demo/start_koshad.sh
 - One-time (already done on this machine), then **Developer: Reload Window**:
   ```sh
   make bob-install   # Bob global: stamps each tab's identity on Kosha's tools; auto-approves them
