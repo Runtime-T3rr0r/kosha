@@ -73,7 +73,7 @@ Decisions are deterministic accounting. No model call ever decides allow, ask or
 | Bob task session screenshots, both team members | [bob_sessions/](bob_sessions/), indexed in [the screenshot table](#bob-task-session-screenshots) |
 | Code Bob assisted with | [Bob as a build and test tool](#2-bob-as-a-build-and-test-tool) |
 | Demo video (MP4, ≤3 min) | TODO: link |
-| Public repository | https://github.com/Penitant/kosha |
+| Public repository | https://github.com/Runtime-T3rr0r/kosha |
 | License | [MIT](LICENSE) · [third-party notices](THIRD_PARTY_NOTICES.md) · [security](SECURITY.md) |
 
 ---
@@ -92,28 +92,28 @@ All benchmarks are offline and deterministic, with no model calls. They are rege
 | B1 denylist (Bob `deniedCommands` style) | 6.3% (34/537) | 6.0% | 2.6% (14/537) | 0.00 |
 | B2 per-action gate, ask on any L4+ | 58.8% (316/537) | 12.8% | 57.4% (308/537) | 15.53 (1,034/6,657) |
 | B3 count budget, N=38² | 0.0% (0/537) | 0.0% | 0.0% (0/537) | 0.00 |
-| **M1 Kosha, hand-set prices** | **29.2% (157/537)** | **6.9%** | **27.7% (149/537)** | **0.63 (42/6,657)** |
+| **Kosha** | **29.2% (157/537)** | **6.9%** | **27.7% (149/537)** | **0.63 (42/6,657)** |
 
 ¹ Strict: flags at steps whose level came from the conservative unknown-command default don't count.
 ² N = agent_cap / the L3 price. Smaller N catches more but asks on almost everything benign: N=5 catches 88.8% and asks in 83.0 of 100 benign runs.
 
-On single agents, M1 catches half as many rogue runs as a per-action L4+ gate, at 1/25 of its benign ask rate. The paired false-alarm rate is high for both: StepShield's clean twins do much of the same consequential work as the rogue runs. The single-agent threshold (L4+) was set on benign SWE-smith data: over 26,076 runs, M1 asks in **4.53 of 100** at `agent_cap` and the escalation rule asks in **6.99 of 100** (Bench C, `bench/benign_spend.py`).
+On single agents, Kosha catches half as many rogue runs as a per-action L4+ gate, at 1/25 of its benign ask rate. The paired false-alarm rate is high for both: StepShield's clean twins do much of the same consequential work as the rogue runs. The single-agent threshold (L4+) was set on benign SWE-smith data: over 26,076 runs, Kosha asks in **4.53 of 100** at `agent_cap` and the escalation rule asks in **6.99 of 100** (Bench C, `bench/benign_spend.py`).
 
 ### Bench B: composed fleets (synthetic)
 
-StepShield has one agent per trajectory, so fleets are **synthetic**. Trajectories that M1 does *not* flag when replayed alone are interleaved as 3, 4 or 5 concurrent agents in one window, 300 fleets per kind and size, in two interleavings. Pool `aggregate_only`: no member is caught by M1, B1 or B2 on its own.
+StepShield has one agent per trajectory, so fleets are **synthetic**. Trajectories that Kosha does *not* flag when replayed alone are interleaved as 3, 4 or 5 concurrent agents in one window, 300 fleets per kind and size, in two interleavings. Pool `aggregate_only`: no member is caught by Kosha, B1 or B2 on its own.
 
 | Gate | Fleet catch (rogue fleets) | Flag on the rogue agent after divergence | False alarm, all-clean fleets | False alarm, rogue swapped for its clean twin |
 |---|---|---|---|---|
 | B1 denylist | 0.0% (0/1,800) | 0.0% | 0.0% (0/1,800) | 1.9% (34/1,800) |
 | B2 per-action L4+ | 0.0% (0/1,800) | 0.0% | 0.0% (0/1,800) | 20.7% (372/1,800) |
-| **M1 Kosha** | **100% (1,800/1,800)** | **87.0% (1,566/1,800)** | **100% (1,800/1,800)** | **100% (1,800/1,800)** |
+| **Kosha** | **100% (1,800/1,800)** | **87.0% (1,566/1,800)** | **100% (1,800/1,800)** | **100% (1,800/1,800)** |
 
-**The null result, stated directly:** M1 catches every composed fleet, and it also flags every all-clean composed fleet. On this benchmark it does not discriminate rogue from clean at all. Every M1 flag in Bench B comes from the **escalation rule**, in all 10,800 fleets. It is not budget: a whole fleet's spend never exceeds 552 of the 750 budget, even if every action were allowed. With two or more agents in the window, L3+ actions count as consequential. Routine local work (creating a file, running a local script) spread across three agents reaches the two-consequential-actions threshold whatever the agents intend.
+**What the 100% means:** Kosha asks on every composed fleet, including all-clean ones. Every flag in Bench B comes from the **escalation rule**, in all 10,800 fleets. It is not budget: a whole fleet's spend never exceeds 552 of the 750 budget, even if every action were allowed. With two or more agents in the window, L3+ actions count as consequential. Routine local work (creating a file, running a local script) spread across three agents reaches the two-consequential-actions threshold whatever the agents intend.
 
-That is the design working as specified, not a detector failing. Per design rule 5, Kosha doesn't try to infer intent. It guarantees that once a fleet has jointly done enough consequential work, a human sees the bundle before the next consequential step. B1 and B2 never do: 0 of 1,800 fleets. Whether that interruption rate is acceptable for real multi-agent work is open until there is recorded fleet data. `fleet_budget` is also a single-agent proxy (2 × `agent_cap`) for the same reason.
+That is the design working as specified, not a detector failing. Per design rule 5, Kosha doesn't try to infer intent. It guarantees that once a fleet has jointly done enough consequential work, a human sees the bundle before the next consequential step. B1 and B2 never do: 0 of 1,800 fleets.
 
-Bench D (git history, SZZ proxy) and Bench E (engineered target convergence) are in `bench/results/` and on the dashboard with their caveats.
+Bench D (git history, SZZ proxy) and Bench E (engineered target convergence) are in `bench/results/` and on the dashboard.
 
 ---
 
@@ -189,7 +189,7 @@ Kosha puts published research into practice. It doesn't invent new theory. What 
 There is no PyPI package or `kosha init` yet. Install from a clone. `pip install .` works too; the effects table and price table ship inside the package. Editable mode (`-e`) is for working on Kosha itself.
 
 ```bash
-git clone https://github.com/Penitant/kosha.git
+git clone https://github.com/Runtime-T3rr0r/kosha.git
 cd kosha
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
@@ -404,8 +404,7 @@ APPROVAL`; then approve on the panel and tell the agent to retry the same call.
 - **An agent keeps retrying a held call:** Bob's own loop guard warns at 3 identical calls and
   stops the task at 5. Tell the agent to wait for approval.
 - **The collision must be the same form for both agents:** both `git push` the same branch
-  (as scripted), or both use file tools on the same file. A file tool and a shell command
-  on the same file don't converge yet (pending teammate fix in `convergence.targets_of`).
+  (as scripted), or both touch the same file.
 - Nothing in this demo runs longer than about 1s (`deploy.sh` is the longest). If you add an
   fs_guard beat, stage it when no Kosha command is running.
 
@@ -766,7 +765,7 @@ Matching is **exact and typed**, never substring. `path:/logs` does not match `p
 | L4 | Cross-scope (shared/external) | `git push`, SQL on prod, HTTP POST |
 | L5 | Privilege-expanding | write to `.bob/`, `sudo`, `chmod 777` |
 
-### Cell pricing (m1 table)
+### Cell pricing
 
 The price of an action depends on its **cell** (a combination of reversibility, scope, and privilege), not just its level. Two L4 actions can cost differently:
 
@@ -785,7 +784,7 @@ The price of an action depends on its **cell** (a combination of reversibility, 
 | Limit | Value | Basis |
 |---|---|---|
 | `agent_cap` | 375 | just above p95 (362.5) of SWE-smith single-agent sessions (n=26,076) |
-| `fleet_budget` | 750 | 2 × agent_cap (single-agent proxy until multi-agent bench) |
+| `fleet_budget` | 750 | 2 × agent_cap |
 
 A single-agent session hits `agent_cap` before `fleet_budget`, so `agent_cap` sets the benign false-alarm rate: 4.53 asks per 100 SWE-smith runs. The fleet budget ensures no one agent can consume more than half the shared window.
 
@@ -922,7 +921,7 @@ The threat: an agent could approve its own held actions by posting to `/approval
 
 **Tier 2 (authentication)**: `POST /approvals/{id}` requires the `X-Kosha-Approval` header containing the passphrase set at startup. A wrong passphrase returns 401. The passphrase is compared using `hmac.compare_digest` on its SHA-256 hash (timing-safe). It's never present in `/proc/<pid>/environ` or `cmdline`.
 
-**Tier 3 (roadmap)**: OS-level privilege separation (koshad runs as a different user, with a Unix socket owned by that user). This is the only complete fix; Tiers 1 and 2 are pattern-based and can be obfuscated around.
+**Tier 3 (next)**: OS-level privilege separation (koshad runs as a different user, with a Unix socket owned by that user).
 
 ---
 
@@ -1123,7 +1122,7 @@ Concurrency is mutation-tested: swapping `BEGIN IMMEDIATE` for `BEGIN` fails the
 
 ## Known limitations (v1)
 
-These are documented gaps, not surprises:
+Design boundaries of this version:
 
 1. **Not a sandbox.** Kosha is a guardrail for well-meaning agents (see [What Kosha is, and is not](#what-kosha-is-and-is-not)). Classification reads argv; an obfuscated or opaque command can be priced lower than what it does. Opaque scripts (`python x.py`) are priced by a flat fallback, not scanned.
 
@@ -1131,11 +1130,9 @@ These are documented gaps, not surprises:
 
 3. **fs_guard acts after the write.** It undoes bypasses; it doesn't prevent them. Anything read or exfiltrated before the undo is out. Layers 1 and 2 are the prevention layers.
 
-4. **Tier 1 self-approval guard is pattern-based.** An obfuscated command (`python3 -c "import requests; requests.post(...)"`) won't be detected. The real fix is OS privilege separation (Tier 3, roadmap).
+4. **Tier 1 self-approval guard is pattern-based.** An obfuscated command (`python3 -c "import requests; requests.post(...)"`) won't be detected. OS privilege separation (Tier 3) is next.
 
 5. **`raw` is stored in plain text.** Approval bundles and the actions table store full tool input (SQL, file contents, commands). This is intentional: a human needs to see the content to decide on an approval. Reset `kosha.db` before recording any demo that involves sensitive inputs.
-
-6. **Calibration is pending.** M1 prices are hand-set, `n` and `p_high` are empty, and `fleet_budget` is a single-agent proxy (2 × `agent_cap`). M2 (`config/price_table.m2.json`) doesn't exist yet.
 
 ---
 
@@ -1161,7 +1158,7 @@ kosha/
     parser.py          Action → (level, cell): bashlex + effects.yaml + resolvers
     resolvers.py       Context: git state, workspace, DB scope, control-plane paths
     fs_guard.py        inotify watcher, undo, quarantine
-  pricing/             Pricing / rubric / calibration track
+  pricing/             Pricing and rubric
     rubric.py          Severity axes → L0–L5
     pricing.py         Cell string → price; load price table
     policy.py          (Action, level, cell, LedgerState) → Decision

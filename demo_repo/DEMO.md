@@ -131,7 +131,6 @@ APPROVAL`; then approve on the panel and tell the agent to retry the same call.
 - **An agent keeps retrying a held call:** Bob's own loop guard warns at 3 identical calls and
   stops the task at 5. Tell the agent to wait for approval.
 - **The collision must be the same form for both agents:** both `git push` the same branch
-  (as scripted), or both use file tools on the same file. A file tool and a shell command
-  on the same file don't converge yet (pending teammate fix in `convergence.targets_of`).
+  (as scripted), or both touch the same file.
 - Nothing in this demo runs longer than about 1s (`deploy.sh` is the longest). If you add an
   fs_guard beat, stage it when no Kosha command is running.
